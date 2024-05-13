@@ -3,19 +3,16 @@ package db
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
-
-	"github.com/google/uuid"
 )
 
 type Condition struct {
-	Field    string `json:"field"`
-	Operator string `json:"operator"`
-	Value    Value  `json:"value"`
+	Field    string      `json:"field"`
+	Operator string      `json:"operator"`
+	Value    interface{} `json:"value"`
 }
 
 type DatabaseQuery struct {
@@ -58,85 +55,85 @@ func (f Fields) String() []string {
 	return fields
 }
 
-type Value struct {
-	vType FieldType
-	value interface{}
-}
+// type Value struct {
+// 	vType FieldType
+// 	value interface{}
+// }
 
-func NewValue(value interface{}) (*Value, error) {
-	v := &Value{}
-	err := v.Set(value)
-	if err != nil {
-		return nil, err
-	}
-	return v, nil
-}
+// func NewValue(value interface{}) (*Value, error) {
+// 	v := &Value{}
+// 	err := v.Set(value)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	return v, nil
+// }
 
-// don't use this unless you know what you're doing
-func MustNewValue(value interface{}) Value {
-	v, err := NewValue(value)
-	if err != nil {
-		panic(err)
-	}
-	return *v
-}
+// // don't use this unless you know what you're doing
+// func MustNewValue(value interface{}) Value {
+// 	v, err := NewValue(value)
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// 	return *v
+// }
 
-// method for Value when converted from JSON
-func (v *Value) UnmarshalJSON(b []byte) error {
-	var value interface{}
-	err := json.Unmarshal(b, &value)
-	if err != nil {
-		return err
-	}
-	return v.Set(value)
-}
-func (v *Value) MarshalJSON() ([]byte, error) {
-	// Convert v.value to JSON
-	b, err := json.Marshal(v.value)
-	if err != nil {
-		return nil, err
-	}
-	return b, nil
-}
+// // method for Value when converted from JSON
+// func (v *Value) UnmarshalJSON(b []byte) error {
+// 	var value interface{}
+// 	err := json.Unmarshal(b, &value)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	return v.Set(value)
+// }
+// func (v *Value) MarshalJSON() ([]byte, error) {
+// 	// Convert v.value to JSON
+// 	b, err := json.Marshal(v.value)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	return b, nil
+// }
 
-func (v *Value) Set(value interface{}) error {
-	switch value := value.(type) {
-	case int:
-		v.vType = IntType
-		v.value = value
-	case string:
-		v.vType = StringType
-		v.value = value
-	case uuid.UUID:
-		v.vType = UUIDType
-		v.value = value
-	default:
-		return fmt.Errorf("invalid type: %T", value)
-	}
-	return nil
-}
-func (v Value) Get() interface{} {
-	return v.value
-}
-func (v Value) String() string {
-	if v.vType == IntType {
-		return fmt.Sprintf("%d", v.value.(int))
-	}
-	if v.vType == UUIDType {
-		return v.value.(uuid.UUID).String()
-	}
-	return v.value.(string)
-}
+// func (v *Value) Set(value interface{}) error {
+// 	switch value := value.(type) {
+// 	case int:
+// 		v.vType = IntType
+// 		v.value = value
+// 	case string:
+// 		v.vType = StringType
+// 		v.value = value
+// 	case uuid.UUID:
+// 		v.vType = UUIDType
+// 		v.value = value
+// 	default:
+// 		return fmt.Errorf("invalid type: %T", value)
+// 	}
+// 	return nil
+// }
+// func (v Value) Get() interface{} {
+// 	return v.value
+// }
+// func (v Value) String() string {
+// 	if v.vType == IntType {
+// 		return fmt.Sprintf("%d", v.value.(int))
+// 	}
+// 	if v.vType == UUIDType {
+// 		return v.value.(uuid.UUID).String()
+// 	}
+// 	return v.value.(string)
+// }
 
-func (v Value) GetTypeName() string {
-	if v.vType == IntType {
-		return "int"
-	}
-	if v.vType == UUIDType {
-		return "uuid"
-	}
-	return "string"
-}
+// func (v Value) GetTypeName() string {
+// 	if v.vType == IntType {
+// 		return "int"
+// 	}
+// 	if v.vType == UUIDType {
+// 		return "uuid"
+// 	}
+// 	return "string"
+// }
 
 type SqlHandler struct {
 	DriverName     string
@@ -160,13 +157,13 @@ func (s *SqlHandler) buildQuery(params *DatabaseQuery) string {
 				query += " AND "
 			}
 			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
-				query += fmt.Sprintf("%s %s '%%%s%%'", condition.Field, condition.Operator, condition.Value.String())
+				query += fmt.Sprintf("%s %s '%%%s%%'", condition.Field, condition.Operator, condition.Value)
 			} else {
-				switch v := condition.Value.value.(type) {
+				switch v := condition.Value.(type) {
 				case int, int32, int64, float32, float64:
 					query += fmt.Sprintf("%s %s %v", condition.Field, condition.Operator, v)
 				default:
-					query += fmt.Sprintf("%s %s '%s'", condition.Field, condition.Operator, condition.Value.String())
+					query += fmt.Sprintf("%s %s '%s'", condition.Field, condition.Operator, condition.Value)
 				}
 			}
 		}
@@ -195,13 +192,13 @@ func (s *SqlHandler) buildPaginatedQuery(params *DatabaseQuery, limit int, offse
 				query += " AND "
 			}
 			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
-				query += fmt.Sprintf("%s %s '%%%s%%'", condition.Field, condition.Operator, condition.Value.String())
+				query += fmt.Sprintf("%s %s '%%%s%%'", condition.Field, condition.Operator, condition.Value)
 			} else {
-				switch v := condition.Value.value.(type) {
+				switch v := condition.Value.(type) {
 				case int, int32, int64, float32, float64:
 					query += fmt.Sprintf("%s %s %v", condition.Field, condition.Operator, v)
 				default:
-					query += fmt.Sprintf("%s %s '%s'", condition.Field, condition.Operator, condition.Value.String())
+					query += fmt.Sprintf("%s %s '%s'", condition.Field, condition.Operator, condition.Value)
 				}
 			}
 		}
@@ -241,13 +238,13 @@ func (s *SqlHandler) buildSearchQuery(params *DatabaseQuery, searchText string) 
 				query += " AND "
 			}
 			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
-				query += fmt.Sprintf("%s %s '%%%s%%'", condition.Field, condition.Operator, condition.Value.String())
+				query += fmt.Sprintf("%s %s '%%%s%%'", condition.Field, condition.Operator, condition.Value)
 			} else {
-				switch v := condition.Value.value.(type) {
+				switch v := condition.Value.(type) {
 				case int, int32, int64, float32, float64:
 					query += fmt.Sprintf("%s %s %v", condition.Field, condition.Operator, v)
 				default:
-					query += fmt.Sprintf("%s %s '%s'", condition.Field, condition.Operator, condition.Value.String())
+					query += fmt.Sprintf("%s %s '%s'", condition.Field, condition.Operator, condition.Value)
 				}
 			}
 		}
