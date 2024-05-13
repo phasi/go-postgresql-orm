@@ -4,11 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 type Condition struct {
@@ -44,6 +45,7 @@ type FieldType int
 const (
 	IntType FieldType = iota
 	StringType
+	UUIDType
 )
 
 type Fields []string
@@ -98,15 +100,18 @@ func (v *Value) MarshalJSON() ([]byte, error) {
 }
 
 func (v *Value) Set(value interface{}) error {
-	switch value.(type) {
+	switch value := value.(type) {
 	case int:
 		v.vType = IntType
-		v.value = value.(int)
+		v.value = value
 	case string:
 		v.vType = StringType
-		v.value = value.(string)
+		v.value = value
+	case uuid.UUID:
+		v.vType = UUIDType
+		v.value = value
 	default:
-		return errors.New(fmt.Sprintf("invalid type: %T", value))
+		return fmt.Errorf("invalid type: %T", value)
 	}
 	return nil
 }
@@ -117,12 +122,18 @@ func (v Value) String() string {
 	if v.vType == IntType {
 		return fmt.Sprintf("%d", v.value.(int))
 	}
+	if v.vType == UUIDType {
+		return v.value.(uuid.UUID).String()
+	}
 	return v.value.(string)
 }
 
 func (v Value) GetTypeName() string {
 	if v.vType == IntType {
 		return "int"
+	}
+	if v.vType == UUIDType {
+		return "uuid"
 	}
 	return "string"
 }
@@ -151,7 +162,12 @@ func (s *SqlHandler) buildQuery(params *DatabaseQuery) string {
 			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
 				query += fmt.Sprintf("%s %s '%%%s%%'", condition.Field, condition.Operator, condition.Value.String())
 			} else {
-				query += fmt.Sprintf("%s %s %s", condition.Field, condition.Operator, condition.Value.String())
+				switch v := condition.Value.value.(type) {
+				case int, int32, int64, float32, float64:
+					query += fmt.Sprintf("%s %s %v", condition.Field, condition.Operator, v)
+				default:
+					query += fmt.Sprintf("%s %s '%s'", condition.Field, condition.Operator, condition.Value.String())
+				}
 			}
 		}
 	}
@@ -181,7 +197,12 @@ func (s *SqlHandler) buildPaginatedQuery(params *DatabaseQuery, limit int, offse
 			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
 				query += fmt.Sprintf("%s %s '%%%s%%'", condition.Field, condition.Operator, condition.Value.String())
 			} else {
-				query += fmt.Sprintf("%s %s %s", condition.Field, condition.Operator, condition.Value.String())
+				switch v := condition.Value.value.(type) {
+				case int, int32, int64, float32, float64:
+					query += fmt.Sprintf("%s %s %v", condition.Field, condition.Operator, v)
+				default:
+					query += fmt.Sprintf("%s %s '%s'", condition.Field, condition.Operator, condition.Value.String())
+				}
 			}
 		}
 	}
@@ -222,7 +243,12 @@ func (s *SqlHandler) buildSearchQuery(params *DatabaseQuery, searchText string) 
 			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
 				query += fmt.Sprintf("%s %s '%%%s%%'", condition.Field, condition.Operator, condition.Value.String())
 			} else {
-				query += fmt.Sprintf("%s %s %s", condition.Field, condition.Operator, condition.Value.String())
+				switch v := condition.Value.value.(type) {
+				case int, int32, int64, float32, float64:
+					query += fmt.Sprintf("%s %s %v", condition.Field, condition.Operator, v)
+				default:
+					query += fmt.Sprintf("%s %s '%s'", condition.Field, condition.Operator, condition.Value.String())
+				}
 			}
 		}
 	}
@@ -261,7 +287,6 @@ func (s *SqlHandler) buildInsertQuery(params *DatabaseInsert, data *[]map[string
 }
 
 func (s SqlHandler) Insert(ctx context.Context, insertProps DatabaseInsert, data *[]map[string]interface{}) (err error) {
-	// Connect to the SQLite database
 	q, args, err := s.buildInsertQuery(&insertProps, data)
 	if err != nil {
 		return
@@ -285,7 +310,6 @@ func (s SqlHandler) Insert(ctx context.Context, insertProps DatabaseInsert, data
 }
 
 func (s SqlHandler) Query(r *http.Request, queryProps DatabaseQuery) (rows *sql.Rows, err error) {
-	// Connect to the SQLite database
 	var q string
 	if queryProps.AllowPagination {
 		// get "orderBy" from request query params
@@ -300,7 +324,7 @@ func (s SqlHandler) Query(r *http.Request, queryProps DatabaseQuery) (rows *sql.
 				}
 			}
 			if !found {
-				return nil, errors.New(fmt.Sprintf("invalid field '%s' used for orderBy", orderBy))
+				return nil, fmt.Errorf("invalid field '%s' used for orderBy", orderBy)
 			}
 		}
 
