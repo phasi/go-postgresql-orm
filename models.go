@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 )
@@ -16,8 +17,11 @@ type Condition struct {
 }
 
 type DatabaseQuery struct {
-	Table           string      `json:"table"`
-	Fields          Fields      `json:"fields"`
+	Table string `json:"table"`
+	// Fields is a slice of strings that represent the fields to be selected
+	Fields Fields `json:"fields"`
+	// instead of Fields pass any type of struct with "db_column" tags in properties
+	Model           interface{} `json:"model"`
 	Condition       []Condition `json:"condition"`
 	OrderBy         string      `json:"orderBy"`
 	Limit           int         `json:"limit"`
@@ -55,86 +59,6 @@ func (f Fields) String() []string {
 	return fields
 }
 
-// type Value struct {
-// 	vType FieldType
-// 	value interface{}
-// }
-
-// func NewValue(value interface{}) (*Value, error) {
-// 	v := &Value{}
-// 	err := v.Set(value)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	return v, nil
-// }
-
-// // don't use this unless you know what you're doing
-// func MustNewValue(value interface{}) Value {
-// 	v, err := NewValue(value)
-// 	if err != nil {
-// 		panic(err)
-// 	}
-// 	return *v
-// }
-
-// // method for Value when converted from JSON
-// func (v *Value) UnmarshalJSON(b []byte) error {
-// 	var value interface{}
-// 	err := json.Unmarshal(b, &value)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	return v.Set(value)
-// }
-// func (v *Value) MarshalJSON() ([]byte, error) {
-// 	// Convert v.value to JSON
-// 	b, err := json.Marshal(v.value)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	return b, nil
-// }
-
-// func (v *Value) Set(value interface{}) error {
-// 	switch value := value.(type) {
-// 	case int:
-// 		v.vType = IntType
-// 		v.value = value
-// 	case string:
-// 		v.vType = StringType
-// 		v.value = value
-// 	case uuid.UUID:
-// 		v.vType = UUIDType
-// 		v.value = value
-// 	default:
-// 		return fmt.Errorf("invalid type: %T", value)
-// 	}
-// 	return nil
-// }
-// func (v Value) Get() interface{} {
-// 	return v.value
-// }
-// func (v Value) String() string {
-// 	if v.vType == IntType {
-// 		return fmt.Sprintf("%d", v.value.(int))
-// 	}
-// 	if v.vType == UUIDType {
-// 		return v.value.(uuid.UUID).String()
-// 	}
-// 	return v.value.(string)
-// }
-
-// func (v Value) GetTypeName() string {
-// 	if v.vType == IntType {
-// 		return "int"
-// 	}
-// 	if v.vType == UUIDType {
-// 		return "uuid"
-// 	}
-// 	return "string"
-// }
-
 type SqlHandler struct {
 	DriverName     string
 	DatasourceName string
@@ -148,6 +72,7 @@ func NewSqlHandler(driverName string, datasourceName string) *SqlHandler {
 }
 
 func (s *SqlHandler) buildQuery(params *DatabaseQuery) string {
+	parseTags(params.Model, &params.Fields)
 	var query string
 	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.Fields.String(), ","), params.Table)
 	if len(params.Condition) > 0 {
@@ -183,6 +108,7 @@ func (s *SqlHandler) buildQuery(params *DatabaseQuery) string {
 }
 
 func (s *SqlHandler) buildPaginatedQuery(params *DatabaseQuery, limit int, offset int, orderBy string) string {
+	parseTags(params.Model, &params.Fields)
 	var query string
 	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.Fields.String(), ","), params.Table)
 	if len(params.Condition) > 0 {
@@ -229,6 +155,7 @@ func (s *SqlHandler) buildPaginatedQuery(params *DatabaseQuery, limit int, offse
 }
 
 func (s *SqlHandler) buildSearchQuery(params *DatabaseQuery, searchText string) string {
+	parseTags(params.Model, &params.Fields)
 	var query string
 	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.Fields.String(), ","), params.Table)
 	if len(params.Condition) > 0 {
@@ -304,6 +231,141 @@ func (s SqlHandler) Insert(ctx context.Context, insertProps DatabaseInsert, data
 	// Execute the query
 	_, err = stmt.Exec(args...)
 	return
+}
+
+type FieldMap map[string]string
+
+func parseTags(model interface{}, fields *Fields) FieldMap {
+	val := reflect.ValueOf(model)
+	if val.Kind() == reflect.Ptr {
+		val = val.Elem()
+	}
+	fieldMap := make(FieldMap)
+	for i := 0; i < val.NumField(); i++ {
+		typeField := val.Type().Field(i)
+		if tag, ok := typeField.Tag.Lookup("db_column"); ok {
+			*fields = append(*fields, tag)
+			fieldMap[tag] = typeField.Name
+		}
+	}
+	return fieldMap
+}
+
+func (s SqlHandler) First(tableName string, model interface{}, condition []Condition) error {
+	var queryProps DatabaseQuery
+	queryProps.Table = tableName
+	queryProps.Model = model
+	queryProps.Condition = condition
+	queryProps.Limit = 1
+	fieldMap := parseTags(model, &queryProps.Fields)
+	rows, err := s.Query(nil, queryProps)
+	if err != nil {
+		return fmt.Errorf("error querying database: %v", err)
+	}
+	defer rows.Close()
+	if rows.Next() {
+		columns, _ := rows.Columns()
+		scanArgs := make([]interface{}, len(columns))
+		val := reflect.ValueOf(model).Elem()
+		for i, column := range columns {
+			if field, ok := fieldMap[column]; ok {
+				fieldVal := val.FieldByName(field)
+				if fieldVal.IsValid() && fieldVal.CanAddr() {
+					scanArgs[i] = fieldVal.Addr().Interface()
+				} else {
+					var discard interface{}
+					scanArgs[i] = &discard
+				}
+			} else {
+				var discard interface{}
+				scanArgs[i] = &discard
+			}
+		}
+		err = rows.Scan(scanArgs...)
+		if err != nil {
+			return fmt.Errorf("error scanning row: %v", err)
+		}
+	}
+	return nil
+}
+
+func (s SqlHandler) All(tableName string, model interface{}, condition []Condition) ([]interface{}, error) {
+	var queryProps DatabaseQuery
+	queryProps.Table = tableName
+	queryProps.Model = model
+	queryProps.Condition = condition
+	fieldMap := parseTags(model, &queryProps.Fields)
+	rows, err := s.Query(nil, queryProps)
+	if err != nil {
+		return nil, fmt.Errorf("error querying database: %v", err)
+	}
+	defer rows.Close()
+
+	var results []interface{}
+	columns, _ := rows.Columns()
+	for rows.Next() {
+		scanArgs := make([]interface{}, len(columns))
+		val := reflect.New(reflect.TypeOf(model).Elem())
+		for i, column := range columns {
+			if field, ok := fieldMap[column]; ok {
+				fieldVal := val.Elem().FieldByName(field)
+				if fieldVal.IsValid() && fieldVal.CanAddr() {
+					scanArgs[i] = fieldVal.Addr().Interface()
+				} else {
+					var discard interface{}
+					scanArgs[i] = &discard
+				}
+			} else {
+				var discard interface{}
+				scanArgs[i] = &discard
+			}
+		}
+		err = rows.Scan(scanArgs...)
+		if err != nil {
+			return nil, fmt.Errorf("error scanning row: %v", err)
+		}
+		results = append(results, val.Interface())
+	}
+	return results, nil
+}
+
+func (s SqlHandler) RichQuery(r *http.Request, queryProps *DatabaseQuery) ([]interface{}, error) {
+	var fieldMap FieldMap
+	if queryProps.Model != nil {
+		fieldMap = parseTags(queryProps.Model, &queryProps.Fields)
+	}
+	rows, err := s.Query(r, *queryProps)
+	if err != nil {
+		return nil, fmt.Errorf("error querying database: %v", err)
+	}
+	defer rows.Close()
+
+	var results []interface{}
+	columns, _ := rows.Columns()
+	for rows.Next() {
+		scanArgs := make([]interface{}, len(columns))
+		val := reflect.New(reflect.TypeOf(queryProps.Model).Elem())
+		for i, column := range columns {
+			if field, ok := fieldMap[column]; ok {
+				fieldVal := val.Elem().FieldByName(field)
+				if fieldVal.IsValid() && fieldVal.CanAddr() {
+					scanArgs[i] = fieldVal.Addr().Interface()
+				} else {
+					var discard interface{}
+					scanArgs[i] = &discard
+				}
+			} else {
+				var discard interface{}
+				scanArgs[i] = &discard
+			}
+		}
+		err = rows.Scan(scanArgs...)
+		if err != nil {
+			return nil, fmt.Errorf("error scanning row: %v", err)
+		}
+		results = append(results, val.Interface())
+	}
+	return results, nil
 }
 
 func (s SqlHandler) Query(r *http.Request, queryProps DatabaseQuery) (rows *sql.Rows, err error) {
