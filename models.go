@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+var tablePrefix = "gpo_"
+
 type Condition struct {
 	Field    string      `json:"field"`
 	Operator string      `json:"operator"`
@@ -29,6 +31,137 @@ type DatabaseQuery struct {
 	AllowPagination bool        `json:"allowPagination"`
 	AllowSearch     bool        `json:"allowSearch"`
 	SearchFields    Fields      `json:"searchFields"`
+}
+
+// Column represents a column in a database table
+type Column struct {
+	// Name is the name of the column, for example "id"
+	Name string
+	// Type is the type of the column, for example "VARCHAR(255)"
+	Type string
+	// primaryKey is a boolean that indicates whether the column is a primary key
+	PrimaryKey bool
+	// allow null
+	Null bool
+}
+
+type ForeignKey struct {
+	ColumnName string
+	References string // format: "table(column)"
+}
+
+// Table represents a database table
+type Table struct {
+	// Name is the name of the table, for example "users"
+	Name string
+	// Columns is a slice of Column structs that represent the columns in the table
+	Columns     []Column
+	ForeignKeys []ForeignKey
+}
+
+func convertGoTypeToPostgresType(goType string) string {
+	// Convert Go type to Postgres type
+	switch goType {
+	case "string":
+		return "VARCHAR(255)"
+	case "int":
+		return "INTEGER"
+	case "int32":
+		return "INTEGER"
+	case "int64":
+		return "INTEGER"
+	case "uint":
+		return "INTEGER"
+	case "uint32":
+		return "INTEGER"
+	case "uint64":
+		return "INTEGER"
+	case "float":
+		return "REAL"
+	case "float32":
+		return "REAL"
+	case "float64":
+		return "REAL"
+	case "bool":
+		return "BOOLEAN"
+	case "uuid.UUID":
+		return "UUID"
+	case "time.Time":
+		return "TIMESTAMP"
+	default:
+		return "VARCHAR(255)"
+	}
+}
+
+func getColumnsAndForeignKeysFromStruct(s interface{}) ([]Column, []ForeignKey) {
+	t := reflect.TypeOf(s)
+
+	// If the type is a pointer, get the element type
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+
+	var columns []Column
+	var foreignKeys []ForeignKey
+
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		columnName, ok := field.Tag.Lookup("db_column")
+		if ok {
+			columnType := convertGoTypeToPostgresType(field.Type.Name())
+			columns = append(columns, Column{Name: columnName, Type: columnType, PrimaryKey: columnName == "id"})
+		}
+
+		fk, ok := field.Tag.Lookup("db_fk")
+		if ok {
+			foreignKeys = append(foreignKeys, ForeignKey{ColumnName: columnName, References: fk})
+		}
+	}
+
+	return columns, foreignKeys
+}
+
+func _createTable(db *sql.DB, table Table) error {
+	if table.Name == "" {
+		return fmt.Errorf("table name cannot be empty")
+	}
+
+	// Start the create table statement
+	sql := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (id UUID PRIMARY KEY,", table.Name)
+
+	// Add columns to the table
+	for _, column := range table.Columns {
+		if column.Name == "id" {
+			continue
+		}
+		nullText := "NOT NULL"
+		if column.Null {
+			nullText = "NULL"
+		}
+		sql += fmt.Sprintf("%s %s %s,", column.Name, column.Type, nullText)
+	}
+
+	// Add foreign keys
+	for _, fk := range table.ForeignKeys {
+		// Split the references into table and column
+		parts := strings.SplitN(fk.References, "(", 2)
+		table := parts[0]
+		column := strings.TrimSuffix(parts[1], ")")
+
+		// Correctly format the REFERENCES clause
+		sql += fmt.Sprintf("FOREIGN KEY (%s) REFERENCES %s(%s),", fk.ColumnName, table, column)
+	}
+
+	// Remove trailing comma and close parentheses
+	sql = strings.TrimSuffix(sql, ",") + ")"
+
+	// Execute the create table statement
+	_, err := db.Exec(sql)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 type DatabaseInsert struct {
@@ -59,19 +192,75 @@ func (f Fields) String() []string {
 	return fields
 }
 
-type SqlHandler struct {
+type SQLConnector struct {
 	DriverName     string
 	DatasourceName string
+	db             *sql.DB
 }
 
-func NewSqlHandler(driverName string, datasourceName string) *SqlHandler {
-	return &SqlHandler{
-		DriverName:     driverName,
-		DatasourceName: datasourceName,
+func (s *SQLConnector) Connect() (err error) {
+	s.db, err = sql.Open(s.DriverName, s.DatasourceName)
+	return err
+}
+
+func (s *SQLConnector) Close() error {
+	return s.db.Close()
+}
+
+func (s *SQLConnector) GetConnection() *sql.DB {
+	return s.db
+}
+
+func (s *SQLConnector) Ping() error {
+	db := s.GetConnection()
+	return db.Ping()
+}
+
+func (s *SQLConnector) CreateDatabase(dbName string) error {
+	db := s.GetConnection()
+	// Check if the database exists
+	var exists bool
+	db.QueryRow("SELECT 1 FROM pg_database WHERE datname=$1", dbName).Scan(&exists)
+	if exists {
+		return nil
 	}
+
+	// If not, create it
+	_, err := db.Exec(fmt.Sprintf("CREATE DATABASE %s", dbName))
+	return err
 }
 
-func (s *SqlHandler) buildQuery(params *DatabaseQuery) string {
+// CreateTables creates tables in the database for the given models (table names are populated from the struct names)
+func (s *SQLConnector) CreateTables(models []interface{}) error {
+	for _, model := range models {
+		err := s.CreateTable(model)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func getTableNameFromModel(model interface{}) string {
+	modelType := reflect.TypeOf(model)
+	if modelType.Kind() == reflect.Ptr {
+		modelType = modelType.Elem()
+	}
+	modelName := modelType.Name()
+	tableName := strings.ToLower(modelName)
+	return fmt.Sprintf("%s%s", tablePrefix, tableName)
+}
+
+// CreateTable creates a single table in the database for the given model (table name is passed as an argument)
+func (s *SQLConnector) CreateTable(model interface{}) error {
+	tableName := getTableNameFromModel(model)
+	columns, foreignKeys := getColumnsAndForeignKeysFromStruct(model)
+	table := Table{Name: tableName, Columns: columns, ForeignKeys: foreignKeys}
+	db := s.GetConnection()
+	return _createTable(db, table)
+}
+
+func (s *SQLConnector) buildQuery(params *DatabaseQuery) string {
 	parseTags(params.Model, &params.Fields)
 	var query string
 	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.Fields.String(), ","), params.Table)
@@ -107,7 +296,7 @@ func (s *SqlHandler) buildQuery(params *DatabaseQuery) string {
 	return query
 }
 
-func (s *SqlHandler) buildPaginatedQuery(params *DatabaseQuery, limit int, offset int, orderBy string) string {
+func (s *SQLConnector) buildPaginatedQuery(params *DatabaseQuery, limit int, offset int, orderBy string) string {
 	parseTags(params.Model, &params.Fields)
 	var query string
 	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.Fields.String(), ","), params.Table)
@@ -154,7 +343,7 @@ func (s *SqlHandler) buildPaginatedQuery(params *DatabaseQuery, limit int, offse
 	return query
 }
 
-func (s *SqlHandler) buildSearchQuery(params *DatabaseQuery, searchText string) string {
+func (s *SQLConnector) buildSearchQuery(params *DatabaseQuery, searchText string) string {
 	parseTags(params.Model, &params.Fields)
 	var query string
 	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.Fields.String(), ","), params.Table)
@@ -188,30 +377,62 @@ func (s *SqlHandler) buildSearchQuery(params *DatabaseQuery, searchText string) 
 	return query
 }
 
-func (s *SqlHandler) buildInsertQuery(params *DatabaseInsert, data *[]map[string]interface{}) (string, []interface{}, error) {
+// func getFieldsFromStruct(s interface{}) Fields {
+// 	t := reflect.TypeOf(s)
+// 	// If the type is a pointer, get the element type
+// 	if t.Kind() == reflect.Ptr {
+// 		t = t.Elem()
+// 	}
+// 	var fields Fields
+// 	for i := 0; i < t.NumField(); i++ {
+// 		field := t.Field(i)
+// 		columnName, ok := field.Tag.Lookup("db_column")
+// 		if ok {
+// 			fields = append(fields, columnName)
+// 		}
+// 	}
+// 	return fields
+// }
+
+func (s *SQLConnector) buildInsertQuery(params *DatabaseInsert, model interface{}) (string, []interface{}, error) {
 	var query string
-	var args []interface{}
-	query = fmt.Sprintf("INSERT INTO %s (%s) VALUES ", params.Table, strings.Join(params.Fields.String(), ","))
-	for i, row := range *data {
-		if i > 0 {
+	query = fmt.Sprintf("INSERT INTO %s (%s) VALUES (", params.Table, strings.Join(params.Fields.String(), ","))
+	vals := make([]interface{}, len(params.Fields))
+	modelValue := reflect.ValueOf(model)
+	if modelValue.Kind() == reflect.Ptr {
+		modelValue = modelValue.Elem()
+	}
+	t := modelValue.Type()
+	for i := 0; i < len(params.Fields); i++ {
+		dbColumnName := params.Fields[i]
+		var structFieldName string
+		for j := 0; j < t.NumField(); j++ {
+			field := t.Field(j)
+			if field.Tag.Get("db_column") == dbColumnName {
+				structFieldName = field.Name
+				break
+			}
+		}
+		if structFieldName == "" {
+			return "", nil, fmt.Errorf("no struct field found for database column %s", dbColumnName)
+		}
+		field := modelValue.FieldByName(structFieldName)
+		vals[i] = field.Interface()
+		query += fmt.Sprintf("$%d", i+1)
+		if i < len(params.Fields)-1 {
 			query += ","
 		}
-		query += "("
-		for j, field := range params.Fields {
-			if j > 0 {
-				query += ","
-			}
-			// Use $1, $2, etc. as placeholders instead of ?
-			query += fmt.Sprintf("$%d", len(args)+1)
-			args = append(args, row[field])
-		}
-		query += ")"
 	}
-	return query, args, nil
+	query += ")"
+	return query, vals, nil
 }
 
-func (s SqlHandler) Insert(ctx context.Context, insertProps DatabaseInsert, data *[]map[string]interface{}) (err error) {
-	q, args, err := s.buildInsertQuery(&insertProps, data)
+func (s SQLConnector) Insert(ctx context.Context, model interface{}) (err error) {
+	insertStmt := DatabaseInsert{
+		Table: getTableNameFromModel(model),
+	}
+	parseTags(model, &insertStmt.Fields)
+	q, args, err := s.buildInsertQuery(&insertStmt, model)
 	if err != nil {
 		return
 	}
@@ -251,14 +472,33 @@ func parseTags(model interface{}, fields *Fields) FieldMap {
 	return fieldMap
 }
 
-func (s SqlHandler) First(tableName string, model interface{}, condition []Condition) error {
+func (s SQLConnector) First(ctx context.Context, tableName string, model interface{}, conditionOrId interface{}) error {
+	if conditionOrId == nil {
+		return fmt.Errorf("conditionOrId cannot be nil")
+	}
+	var condition []Condition
+	switch v := conditionOrId.(type) {
+	case []Condition:
+		condition = v
+	default:
+		condition = []Condition{
+			{
+				Field:    "id",
+				Operator: "=",
+				Value:    v,
+			},
+		}
+	}
 	var queryProps DatabaseQuery
 	queryProps.Table = tableName
+	if tableName == "" {
+		queryProps.Table = getTableNameFromModel(model)
+	}
 	queryProps.Model = model
 	queryProps.Condition = condition
 	queryProps.Limit = 1
 	fieldMap := parseTags(model, &queryProps.Fields)
-	rows, err := s.Query(nil, queryProps)
+	rows, err := s.doQuery(ctx, nil, queryProps)
 	if err != nil {
 		return fmt.Errorf("error querying database: %v", err)
 	}
@@ -289,13 +529,16 @@ func (s SqlHandler) First(tableName string, model interface{}, condition []Condi
 	return nil
 }
 
-func (s SqlHandler) All(tableName string, model interface{}, condition []Condition) ([]interface{}, error) {
+func (s SQLConnector) All(ctx context.Context, tableName string, model interface{}, condition []Condition) ([]interface{}, error) {
 	var queryProps DatabaseQuery
 	queryProps.Table = tableName
+	if tableName == "" {
+		queryProps.Table = getTableNameFromModel(model)
+	}
 	queryProps.Model = model
 	queryProps.Condition = condition
 	fieldMap := parseTags(model, &queryProps.Fields)
-	rows, err := s.Query(nil, queryProps)
+	rows, err := s.doQuery(ctx, nil, queryProps)
 	if err != nil {
 		return nil, fmt.Errorf("error querying database: %v", err)
 	}
@@ -329,12 +572,13 @@ func (s SqlHandler) All(tableName string, model interface{}, condition []Conditi
 	return results, nil
 }
 
-func (s SqlHandler) RichQuery(r *http.Request, queryProps *DatabaseQuery) ([]interface{}, error) {
+func (s SQLConnector) Query(r *http.Request, queryProps *DatabaseQuery) ([]interface{}, error) {
+	ctx := r.Context()
 	var fieldMap FieldMap
 	if queryProps.Model != nil {
 		fieldMap = parseTags(queryProps.Model, &queryProps.Fields)
 	}
-	rows, err := s.Query(r, *queryProps)
+	rows, err := s.doQuery(ctx, r, *queryProps)
 	if err != nil {
 		return nil, fmt.Errorf("error querying database: %v", err)
 	}
@@ -368,7 +612,7 @@ func (s SqlHandler) RichQuery(r *http.Request, queryProps *DatabaseQuery) ([]int
 	return results, nil
 }
 
-func (s SqlHandler) Query(r *http.Request, queryProps DatabaseQuery) (rows *sql.Rows, err error) {
+func (s SQLConnector) doQuery(ctx context.Context, r *http.Request, queryProps DatabaseQuery) (rows *sql.Rows, err error) {
 	var q string
 	if queryProps.AllowPagination {
 		// get "orderBy" from request query params
@@ -410,14 +654,9 @@ func (s SqlHandler) Query(r *http.Request, queryProps DatabaseQuery) (rows *sql.
 	} else {
 		q = s.buildQuery(&queryProps)
 	}
-	db, err := sql.Open(s.DriverName, s.DatasourceName)
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
-
+	db := s.GetConnection()
 	// Perform a query
-	rows, err = db.Query(q)
+	rows, err = db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, err
 	}
