@@ -84,9 +84,9 @@ func convertGoTypeToPostgresType(goType string) string {
 		return "REAL"
 	case "bool":
 		return "BOOLEAN"
-	case "uuid.UUID":
+	case "UUID":
 		return "UUID"
-	case "time.Time":
+	case "Time":
 		return "TIMESTAMP"
 	default:
 		return "VARCHAR(255)"
@@ -154,7 +154,6 @@ func _createTable(db *sql.DB, table Table) error {
 
 	// Remove trailing comma and close parentheses
 	sql = strings.TrimSuffix(sql, ",") + ")"
-
 	// Execute the create table statement
 	_, err := db.Exec(sql)
 	if err != nil {
