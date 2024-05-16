@@ -42,7 +42,8 @@ type Column struct {
 	// primaryKey is a boolean that indicates whether the column is a primary key
 	PrimaryKey bool
 	// allow null
-	Null bool
+	Null   bool
+	Unique bool
 }
 
 type ForeignKey struct {
@@ -109,7 +110,8 @@ func getColumnsAndForeignKeysFromStruct(s interface{}) ([]Column, []ForeignKey) 
 		columnName, ok := field.Tag.Lookup("db_column")
 		if ok {
 			columnType := convertGoTypeToPostgresType(field.Type.Name())
-			columns = append(columns, Column{Name: columnName, Type: columnType, PrimaryKey: columnName == "id"})
+			_, unique := field.Tag.Lookup("db_unique")
+			columns = append(columns, Column{Name: columnName, Type: columnType, PrimaryKey: columnName == "id", Unique: unique})
 		}
 
 		fk, ok := field.Tag.Lookup("db_fk")
@@ -138,7 +140,11 @@ func _createTable(db *sql.DB, table Table) error {
 		if column.Null {
 			nullText = "NULL"
 		}
-		sql += fmt.Sprintf("%s %s %s,", column.Name, column.Type, nullText)
+		uniqueText := ""
+		if column.Unique {
+			uniqueText = "UNIQUE"
+		}
+		sql += fmt.Sprintf("%s %s %s %s,", column.Name, column.Type, nullText, uniqueText)
 	}
 
 	// Add foreign keys
