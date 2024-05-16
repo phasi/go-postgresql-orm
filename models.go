@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-var tablePrefix = "gpo_"
+var defaultTablePrefix = "gpo_"
 
 type Condition struct {
 	Field    string      `json:"field"`
@@ -196,6 +196,7 @@ type SQLConnector struct {
 	DriverName     string
 	DatasourceName string
 	db             *sql.DB
+	TablePrefix    string
 }
 
 func (s *SQLConnector) Connect() (err error) {
@@ -241,19 +242,23 @@ func (s *SQLConnector) CreateTables(models []interface{}) error {
 	return nil
 }
 
-func getTableNameFromModel(model interface{}) string {
+func getTableNameFromModel(tablePrefix string, model interface{}) string {
 	modelType := reflect.TypeOf(model)
 	if modelType.Kind() == reflect.Ptr {
 		modelType = modelType.Elem()
 	}
 	modelName := modelType.Name()
 	tableName := strings.ToLower(modelName)
-	return fmt.Sprintf("%s%s", tablePrefix, tableName)
+	tPrefix := tablePrefix
+	if tPrefix == "" {
+		tPrefix = defaultTablePrefix
+	}
+	return fmt.Sprintf("%s%s", tPrefix, tableName)
 }
 
 // CreateTable creates a single table in the database for the given model (table name is passed as an argument)
 func (s *SQLConnector) CreateTable(model interface{}) error {
-	tableName := getTableNameFromModel(model)
+	tableName := getTableNameFromModel(s.TablePrefix, model)
 	columns, foreignKeys := getColumnsAndForeignKeysFromStruct(model)
 	table := Table{Name: tableName, Columns: columns, ForeignKeys: foreignKeys}
 	db := s.GetConnection()
@@ -296,11 +301,11 @@ func (s *SQLConnector) buildQuery(params *DatabaseQuery) string {
 	return query
 }
 
-func (s *SQLConnector) buildPaginatedQuery(params *DatabaseQuery, limit int, offset int, orderBy string) string {
+func (s *SQLConnector) buildAdvancedQuery(params *DatabaseQuery, limit int, offset int, orderBy string, searchText string) string {
 	parseTags(params.Model, &params.Fields)
 	var query string
 	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.Fields.String(), ","), params.Table)
-	if len(params.Condition) > 0 {
+	if len(params.Condition) > 0 || len(params.SearchFields) > 0 {
 		query += " WHERE "
 		for i, condition := range params.Condition {
 			if i > 0 {
@@ -316,6 +321,12 @@ func (s *SQLConnector) buildPaginatedQuery(params *DatabaseQuery, limit int, off
 					query += fmt.Sprintf("%s %s '%s'", condition.Field, condition.Operator, condition.Value)
 				}
 			}
+		}
+		for i, field := range params.SearchFields {
+			if len(params.Condition) > 0 || i > 0 {
+				query += " OR "
+			}
+			query += fmt.Sprintf("%s LIKE '%%%s%%'", field, searchText)
 		}
 	}
 	ob := params.OrderBy
@@ -342,57 +353,6 @@ func (s *SQLConnector) buildPaginatedQuery(params *DatabaseQuery, limit int, off
 	}
 	return query
 }
-
-func (s *SQLConnector) buildSearchQuery(params *DatabaseQuery, searchText string) string {
-	parseTags(params.Model, &params.Fields)
-	var query string
-	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.Fields.String(), ","), params.Table)
-	if len(params.Condition) > 0 {
-		query += " WHERE "
-		for i, condition := range params.Condition {
-			if i > 0 {
-				query += " AND "
-			}
-			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
-				query += fmt.Sprintf("%s %s '%%%s%%'", condition.Field, condition.Operator, condition.Value)
-			} else {
-				switch v := condition.Value.(type) {
-				case int, int32, int64, float32, float64:
-					query += fmt.Sprintf("%s %s %v", condition.Field, condition.Operator, v)
-				default:
-					query += fmt.Sprintf("%s %s '%s'", condition.Field, condition.Operator, condition.Value)
-				}
-			}
-		}
-	}
-	if len(params.SearchFields) > 0 {
-		query += " WHERE "
-		for i, field := range params.SearchFields {
-			if i > 0 {
-				query += " OR "
-			}
-			query += fmt.Sprintf("%s LIKE '%%%s%%'", field, searchText)
-		}
-	}
-	return query
-}
-
-// func getFieldsFromStruct(s interface{}) Fields {
-// 	t := reflect.TypeOf(s)
-// 	// If the type is a pointer, get the element type
-// 	if t.Kind() == reflect.Ptr {
-// 		t = t.Elem()
-// 	}
-// 	var fields Fields
-// 	for i := 0; i < t.NumField(); i++ {
-// 		field := t.Field(i)
-// 		columnName, ok := field.Tag.Lookup("db_column")
-// 		if ok {
-// 			fields = append(fields, columnName)
-// 		}
-// 	}
-// 	return fields
-// }
 
 func (s *SQLConnector) buildInsertQuery(params *DatabaseInsert, model interface{}) (string, []interface{}, error) {
 	var query string
@@ -427,9 +387,9 @@ func (s *SQLConnector) buildInsertQuery(params *DatabaseInsert, model interface{
 	return query, vals, nil
 }
 
-func (s SQLConnector) Insert(ctx context.Context, model interface{}) (err error) {
+func (s SQLConnector) Insert(r *http.Request, model interface{}) (err error) {
 	insertStmt := DatabaseInsert{
-		Table: getTableNameFromModel(model),
+		Table: getTableNameFromModel(s.TablePrefix, model),
 	}
 	parseTags(model, &insertStmt.Fields)
 	q, args, err := s.buildInsertQuery(&insertStmt, model)
@@ -443,7 +403,7 @@ func (s SQLConnector) Insert(ctx context.Context, model interface{}) (err error)
 	defer db.Close()
 
 	// Prepare the query
-	stmt, err := db.PrepareContext(ctx, q)
+	stmt, err := db.PrepareContext(r.Context(), q)
 	if err != nil {
 		return
 	}
@@ -472,7 +432,7 @@ func parseTags(model interface{}, fields *Fields) FieldMap {
 	return fieldMap
 }
 
-func (s SQLConnector) First(ctx context.Context, tableName string, model interface{}, conditionOrId interface{}) error {
+func (s SQLConnector) First(r *http.Request, tableName string, model interface{}, conditionOrId interface{}) error {
 	if conditionOrId == nil {
 		return fmt.Errorf("conditionOrId cannot be nil")
 	}
@@ -492,13 +452,13 @@ func (s SQLConnector) First(ctx context.Context, tableName string, model interfa
 	var queryProps DatabaseQuery
 	queryProps.Table = tableName
 	if tableName == "" {
-		queryProps.Table = getTableNameFromModel(model)
+		queryProps.Table = getTableNameFromModel(s.TablePrefix, model)
 	}
 	queryProps.Model = model
 	queryProps.Condition = condition
 	queryProps.Limit = 1
 	fieldMap := parseTags(model, &queryProps.Fields)
-	rows, err := s.doQuery(ctx, nil, queryProps)
+	rows, err := s.doQuery(r, &queryProps)
 	if err != nil {
 		return fmt.Errorf("error querying database: %v", err)
 	}
@@ -529,56 +489,12 @@ func (s SQLConnector) First(ctx context.Context, tableName string, model interfa
 	return nil
 }
 
-func (s SQLConnector) All(ctx context.Context, tableName string, model interface{}, condition []Condition) ([]interface{}, error) {
-	var queryProps DatabaseQuery
-	queryProps.Table = tableName
-	if tableName == "" {
-		queryProps.Table = getTableNameFromModel(model)
+func (s SQLConnector) All(r *http.Request, queryProps *DatabaseQuery) ([]interface{}, error) {
+	if queryProps.Table == "" && queryProps.Model != nil {
+		queryProps.Table = getTableNameFromModel(s.TablePrefix, queryProps.Model)
 	}
-	queryProps.Model = model
-	queryProps.Condition = condition
-	fieldMap := parseTags(model, &queryProps.Fields)
-	rows, err := s.doQuery(ctx, nil, queryProps)
-	if err != nil {
-		return nil, fmt.Errorf("error querying database: %v", err)
-	}
-	defer rows.Close()
-
-	var results []interface{}
-	columns, _ := rows.Columns()
-	for rows.Next() {
-		scanArgs := make([]interface{}, len(columns))
-		val := reflect.New(reflect.TypeOf(model).Elem())
-		for i, column := range columns {
-			if field, ok := fieldMap[column]; ok {
-				fieldVal := val.Elem().FieldByName(field)
-				if fieldVal.IsValid() && fieldVal.CanAddr() {
-					scanArgs[i] = fieldVal.Addr().Interface()
-				} else {
-					var discard interface{}
-					scanArgs[i] = &discard
-				}
-			} else {
-				var discard interface{}
-				scanArgs[i] = &discard
-			}
-		}
-		err = rows.Scan(scanArgs...)
-		if err != nil {
-			return nil, fmt.Errorf("error scanning row: %v", err)
-		}
-		results = append(results, val.Interface())
-	}
-	return results, nil
-}
-
-func (s SQLConnector) Query(r *http.Request, queryProps *DatabaseQuery) ([]interface{}, error) {
-	ctx := r.Context()
-	var fieldMap FieldMap
-	if queryProps.Model != nil {
-		fieldMap = parseTags(queryProps.Model, &queryProps.Fields)
-	}
-	rows, err := s.doQuery(ctx, r, *queryProps)
+	fieldMap := parseTags(queryProps.Model, &queryProps.Fields)
+	rows, err := s.doQuery(r, queryProps)
 	if err != nil {
 		return nil, fmt.Errorf("error querying database: %v", err)
 	}
@@ -612,9 +528,48 @@ func (s SQLConnector) Query(r *http.Request, queryProps *DatabaseQuery) ([]inter
 	return results, nil
 }
 
-func (s SQLConnector) doQuery(ctx context.Context, r *http.Request, queryProps DatabaseQuery) (rows *sql.Rows, err error) {
+func (s SQLConnector) Query(r *http.Request, queryProps *DatabaseQuery) ([]interface{}, error) {
+	var fieldMap FieldMap
+	if queryProps.Model != nil {
+		fieldMap = parseTags(queryProps.Model, &queryProps.Fields)
+	}
+	rows, err := s.doQuery(r, queryProps)
+	if err != nil {
+		return nil, fmt.Errorf("error querying database: %v", err)
+	}
+	defer rows.Close()
+
+	var results []interface{}
+	columns, _ := rows.Columns()
+	for rows.Next() {
+		scanArgs := make([]interface{}, len(columns))
+		val := reflect.New(reflect.TypeOf(queryProps.Model).Elem())
+		for i, column := range columns {
+			if field, ok := fieldMap[column]; ok {
+				fieldVal := val.Elem().FieldByName(field)
+				if fieldVal.IsValid() && fieldVal.CanAddr() {
+					scanArgs[i] = fieldVal.Addr().Interface()
+				} else {
+					var discard interface{}
+					scanArgs[i] = &discard
+				}
+			} else {
+				var discard interface{}
+				scanArgs[i] = &discard
+			}
+		}
+		err = rows.Scan(scanArgs...)
+		if err != nil {
+			return nil, fmt.Errorf("error scanning row: %v", err)
+		}
+		results = append(results, val.Interface())
+	}
+	return results, nil
+}
+
+func (s SQLConnector) doQuery(r *http.Request, queryProps *DatabaseQuery) (rows *sql.Rows, err error) {
 	var q string
-	if queryProps.AllowPagination {
+	if queryProps.AllowPagination || queryProps.AllowSearch {
 		// get "orderBy" from request query params
 		orderBy := r.URL.Query().Get("orderBy")
 		// iterate over endpoint.Query.Fields to check if orderBy is valid
@@ -647,16 +602,16 @@ func (s SQLConnector) doQuery(ctx context.Context, r *http.Request, queryProps D
 				return nil, err
 			}
 		}
-		q = s.buildPaginatedQuery(&queryProps, limit, offset, orderBy)
-	} else if queryProps.AllowSearch {
+
 		searchText := r.URL.Query().Get("search")
-		q = s.buildSearchQuery(&queryProps, searchText)
+
+		q = s.buildAdvancedQuery(queryProps, limit, offset, orderBy, searchText)
 	} else {
-		q = s.buildQuery(&queryProps)
+		q = s.buildQuery(queryProps)
 	}
 	db := s.GetConnection()
 	// Perform a query
-	rows, err = db.QueryContext(ctx, q)
+	rows, err = db.QueryContext(r.Context(), q)
 	if err != nil {
 		return nil, err
 	}
