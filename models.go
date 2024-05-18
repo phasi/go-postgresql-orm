@@ -270,9 +270,10 @@ func (s *SQLConnector) CreateTable(model interface{}) error {
 	return _createTable(db, table)
 }
 
-func (s *SQLConnector) buildQuery(params *DatabaseQuery) string {
+func (s *SQLConnector) buildQuery(params *DatabaseQuery) (string, []interface{}) {
 	parseTags(params.Model, &params.Fields)
 	var query string
+	args := make([]interface{}, 0)
 	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.Fields.String(), ","), params.Table)
 	if len(params.Condition) > 0 {
 		query += " WHERE "
@@ -281,13 +282,16 @@ func (s *SQLConnector) buildQuery(params *DatabaseQuery) string {
 				query += " AND "
 			}
 			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
-				query += fmt.Sprintf("%s %s '%%%s%%'", condition.Field, condition.Operator, condition.Value)
+				query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
+				args = append(args, "%"+condition.Value.(string)+"%")
 			} else {
 				switch v := condition.Value.(type) {
 				case int, int32, int64, float32, float64:
-					query += fmt.Sprintf("%s %s %v", condition.Field, condition.Operator, v)
+					query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
+					args = append(args, v)
 				default:
-					query += fmt.Sprintf("%s %s '%s'", condition.Field, condition.Operator, condition.Value)
+					query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
+					args = append(args, condition.Value)
 				}
 			}
 		}
@@ -301,14 +305,105 @@ func (s *SQLConnector) buildQuery(params *DatabaseQuery) string {
 		}
 	}
 	if params.Limit > 0 {
-		query += fmt.Sprintf(" LIMIT %d", params.Limit)
+		query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+		args = append(args, params.Limit)
 	}
-	return query
+	return query, args
 }
 
-func (s *SQLConnector) buildAdvancedQuery(params *DatabaseQuery, limit int, offset int, orderBy string, searchText string) string {
+// func (s *SQLConnector) buildQuery(params *DatabaseQuery) string {
+// 	parseTags(params.Model, &params.Fields)
+// 	var query string
+// 	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.Fields.String(), ","), params.Table)
+// 	if len(params.Condition) > 0 {
+// 		query += " WHERE "
+// 		for i, condition := range params.Condition {
+// 			if i > 0 {
+// 				query += " AND "
+// 			}
+// 			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
+// 				query += fmt.Sprintf("%s %s '%%%s%%'", condition.Field, condition.Operator, condition.Value)
+// 			} else {
+// 				switch v := condition.Value.(type) {
+// 				case int, int32, int64, float32, float64:
+// 					query += fmt.Sprintf("%s %s %v", condition.Field, condition.Operator, v)
+// 				default:
+// 					query += fmt.Sprintf("%s %s '%s'", condition.Field, condition.Operator, condition.Value)
+// 				}
+// 			}
+// 		}
+// 	}
+// 	if params.OrderBy != "" {
+// 		query += fmt.Sprintf(" ORDER BY %s", params.OrderBy)
+// 		if params.Ascending {
+// 			query += " ASC"
+// 		} else {
+// 			query += " DESC"
+// 		}
+// 	}
+// 	if params.Limit > 0 {
+// 		query += fmt.Sprintf(" LIMIT %d", params.Limit)
+// 	}
+// 	return query
+// }
+
+// func (s *SQLConnector) buildAdvancedQuery(params *DatabaseQuery, limit int, offset int, orderBy string, searchText string) string {
+// 	parseTags(params.Model, &params.Fields)
+// 	var query string
+// 	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.Fields.String(), ","), params.Table)
+// 	if len(params.Condition) > 0 || len(params.SearchFields) > 0 {
+// 		query += " WHERE "
+// 		for i, condition := range params.Condition {
+// 			if i > 0 {
+// 				query += " AND "
+// 			}
+// 			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
+// 				query += fmt.Sprintf("%s %s '%%%s%%'", condition.Field, condition.Operator, condition.Value)
+// 			} else {
+// 				switch v := condition.Value.(type) {
+// 				case int, int32, int64, float32, float64:
+// 					query += fmt.Sprintf("%s %s %v", condition.Field, condition.Operator, v)
+// 				default:
+// 					query += fmt.Sprintf("%s %s '%s'", condition.Field, condition.Operator, condition.Value)
+// 				}
+// 			}
+// 		}
+// 		for i, field := range params.SearchFields {
+// 			if len(params.Condition) > 0 || i > 0 {
+// 				query += " OR "
+// 			}
+// 			query += fmt.Sprintf("%s LIKE '%%%s%%'", field, searchText)
+// 		}
+// 	}
+// 	ob := params.OrderBy
+// 	if orderBy != "" {
+// 		ob = orderBy
+// 	}
+// 	if ob != "" {
+// 		query += fmt.Sprintf(" ORDER BY %s", ob)
+// 		if params.Ascending {
+// 			query += " ASC"
+// 		} else {
+// 			query += " DESC"
+// 		}
+// 	}
+// 	if params.Limit > 0 {
+// 		query += fmt.Sprintf(" LIMIT %d", params.Limit)
+// 	} else if limit > 0 {
+// 		query += fmt.Sprintf(" LIMIT %d", limit)
+// 	} else {
+// 		query += " LIMIT 10"
+// 	}
+// 	if offset > 0 {
+// 		query += fmt.Sprintf(" OFFSET %d", offset)
+// 	}
+// 	return query
+// }
+
+func (s *SQLConnector) buildAdvancedQuery(params *DatabaseQuery, limit int, offset int, orderBy string, searchText string) (string, []interface{}) {
 	parseTags(params.Model, &params.Fields)
 	var query string
+	args := make([]interface{}, 0)
 	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.Fields.String(), ","), params.Table)
 	if len(params.Condition) > 0 || len(params.SearchFields) > 0 {
 		query += " WHERE "
@@ -317,13 +412,16 @@ func (s *SQLConnector) buildAdvancedQuery(params *DatabaseQuery, limit int, offs
 				query += " AND "
 			}
 			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
-				query += fmt.Sprintf("%s %s '%%%s%%'", condition.Field, condition.Operator, condition.Value)
+				query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
+				args = append(args, "%"+condition.Value.(string)+"%")
 			} else {
 				switch v := condition.Value.(type) {
 				case int, int32, int64, float32, float64:
-					query += fmt.Sprintf("%s %s %v", condition.Field, condition.Operator, v)
+					query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
+					args = append(args, v)
 				default:
-					query += fmt.Sprintf("%s %s '%s'", condition.Field, condition.Operator, condition.Value)
+					query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
+					args = append(args, condition.Value)
 				}
 			}
 		}
@@ -331,7 +429,8 @@ func (s *SQLConnector) buildAdvancedQuery(params *DatabaseQuery, limit int, offs
 			if len(params.Condition) > 0 || i > 0 {
 				query += " OR "
 			}
-			query += fmt.Sprintf("%s LIKE '%%%s%%'", field, searchText)
+			query += fmt.Sprintf("%s LIKE $%d", field, len(args)+1)
+			args = append(args, "%"+searchText+"%")
 		}
 	}
 	ob := params.OrderBy
@@ -347,16 +446,19 @@ func (s *SQLConnector) buildAdvancedQuery(params *DatabaseQuery, limit int, offs
 		}
 	}
 	if params.Limit > 0 {
-		query += fmt.Sprintf(" LIMIT %d", params.Limit)
+		query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+		args = append(args, params.Limit)
 	} else if limit > 0 {
-		query += fmt.Sprintf(" LIMIT %d", limit)
+		query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+		args = append(args, limit)
 	} else {
 		query += " LIMIT 10"
 	}
 	if offset > 0 {
-		query += fmt.Sprintf(" OFFSET %d", offset)
+		query += fmt.Sprintf(" OFFSET $%d", len(args)+1)
+		args = append(args, offset)
 	}
-	return query
+	return query, args
 }
 
 func (s *SQLConnector) buildInsertQuery(params *DatabaseInsert, model interface{}) (string, []interface{}, error) {
@@ -574,6 +676,7 @@ func (s SQLConnector) Query(r *http.Request, queryProps *DatabaseQuery) ([]inter
 
 func (s SQLConnector) doQuery(r *http.Request, queryProps *DatabaseQuery) (rows *sql.Rows, err error) {
 	var q string
+	var args []interface{}
 	if queryProps.AllowPagination || queryProps.AllowSearch {
 		// get "orderBy" from request query params
 		orderBy := r.URL.Query().Get("orderBy")
@@ -610,13 +713,13 @@ func (s SQLConnector) doQuery(r *http.Request, queryProps *DatabaseQuery) (rows 
 
 		searchText := r.URL.Query().Get("search")
 
-		q = s.buildAdvancedQuery(queryProps, limit, offset, orderBy, searchText)
+		q, args = s.buildAdvancedQuery(queryProps, limit, offset, orderBy, searchText)
 	} else {
-		q = s.buildQuery(queryProps)
+		q, args = s.buildQuery(queryProps)
 	}
 	db := s.GetConnection()
 	// Perform a query
-	rows, err = db.QueryContext(r.Context(), q)
+	rows, err = db.QueryContext(r.Context(), q, args...)
 	if err != nil {
 		return nil, err
 	}
