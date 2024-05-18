@@ -44,6 +44,8 @@ type Column struct {
 	// allow null
 	Null   bool
 	Unique bool
+	// Length is the length of the column, for example 255, only used for VARCHAR columns (string)
+	Length int
 }
 
 type ForeignKey struct {
@@ -60,10 +62,13 @@ type Table struct {
 	ForeignKeys []ForeignKey
 }
 
-func convertGoTypeToPostgresType(goType string) string {
+func convertGoTypeToPostgresType(goType string, length int) string {
 	// Convert Go type to Postgres type
 	switch goType {
 	case "string":
+		if length > 0 {
+			return fmt.Sprintf("VARCHAR(%d)", length)
+		}
 		return "VARCHAR(255)"
 	case "int":
 		return "INTEGER"
@@ -90,6 +95,9 @@ func convertGoTypeToPostgresType(goType string) string {
 	case "Time":
 		return "TIMESTAMP"
 	default:
+		if length > 0 {
+			return fmt.Sprintf("VARCHAR(%d)", length)
+		}
 		return "VARCHAR(255)"
 	}
 }
@@ -109,7 +117,16 @@ func getColumnsAndForeignKeysFromStruct(s interface{}) ([]Column, []ForeignKey) 
 		field := t.Field(i)
 		columnName, ok := field.Tag.Lookup("db_column")
 		if ok {
-			columnType := convertGoTypeToPostgresType(field.Type.Name())
+			columnLength, isSet := field.Tag.Lookup("db_column_length")
+			length := 0
+			if isSet {
+				var err error
+				length, err = strconv.Atoi(columnLength)
+				if err != nil {
+					fmt.Println("error converting column length to int, using max length of 255")
+				}
+			}
+			columnType := convertGoTypeToPostgresType(field.Type.Name(), length)
 			_, unique := field.Tag.Lookup("db_unique")
 			columns = append(columns, Column{Name: columnName, Type: columnType, PrimaryKey: columnName == "id", Unique: unique})
 		}
