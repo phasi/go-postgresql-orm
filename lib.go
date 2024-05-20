@@ -1,7 +1,6 @@
 package db
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"net/http"
@@ -13,24 +12,24 @@ import (
 var defaultTablePrefix = "gpo_"
 
 type Condition struct {
-	Field    string      `json:"field"`
-	Operator string      `json:"operator"`
-	Value    interface{} `json:"value"`
+	Field    string
+	Operator string
+	Value    interface{}
 }
 
 type DatabaseQuery struct {
-	Table string `json:"table"`
+	Table string
 	// Fields is a slice of strings that represent the fields to be selected
-	Fields Fields `json:"fields"`
-	// instead of Fields pass any type of struct with "db_column" tags in properties
-	Model           interface{} `json:"model"`
-	Condition       []Condition `json:"condition"`
-	OrderBy         string      `json:"orderBy"`
-	Limit           int         `json:"limit"`
-	Ascending       bool        `json:"ascending"`
-	AllowPagination bool        `json:"allowPagination"`
-	AllowSearch     bool        `json:"allowSearch"`
-	SearchFields    Fields      `json:"searchFields"`
+	fields Fields
+	// pass a struct as Model with "db_column" tags in properties
+	Model           interface{}
+	Condition       []Condition
+	OrderBy         string
+	Limit           int
+	Descending      bool
+	AllowPagination bool
+	AllowSearch     bool
+	SearchFields    Fields
 }
 
 // Column represents a column in a database table
@@ -191,11 +190,6 @@ type DatabaseInsert struct {
 	Table  string `json:"table"`
 }
 
-type DatabaseHandler interface {
-	Query(r *http.Request, queryProps DatabaseQuery) (data []map[string]interface{}, err error)
-	Insert(ctx context.Context, insertProps DatabaseInsert, data *[]map[string]interface{}) (err error)
-}
-
 type FieldType int
 
 const (
@@ -278,7 +272,7 @@ func getTableNameFromModel(tablePrefix string, model interface{}) string {
 	return fmt.Sprintf("%s%s", tPrefix, tableName)
 }
 
-// CreateTable creates a single table in the database for the given model (table name is passed as an argument)
+// CreateTable creates a single table in the database for the given model
 func (s *SQLConnector) CreateTable(model interface{}) error {
 	tableName := getTableNameFromModel(s.TablePrefix, model)
 	columns, foreignKeys := getColumnsAndForeignKeysFromStruct(model)
@@ -288,10 +282,10 @@ func (s *SQLConnector) CreateTable(model interface{}) error {
 }
 
 func (s *SQLConnector) buildQuery(params *DatabaseQuery) (string, []interface{}) {
-	parseTags(params.Model, &params.Fields)
+	parseTags(params.Model, &params.fields)
 	var query string
 	args := make([]interface{}, 0)
-	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.Fields.String(), ","), params.Table)
+	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.fields.String(), ","), params.Table)
 	if len(params.Condition) > 0 {
 		query += " WHERE "
 		for i, condition := range params.Condition {
@@ -315,10 +309,10 @@ func (s *SQLConnector) buildQuery(params *DatabaseQuery) (string, []interface{})
 	}
 	if params.OrderBy != "" {
 		query += fmt.Sprintf(" ORDER BY %s", params.OrderBy)
-		if params.Ascending {
-			query += " ASC"
-		} else {
+		if params.Descending {
 			query += " DESC"
+		} else {
+			query += " ASC"
 		}
 	}
 	if params.Limit > 0 {
@@ -328,100 +322,11 @@ func (s *SQLConnector) buildQuery(params *DatabaseQuery) (string, []interface{})
 	return query, args
 }
 
-// func (s *SQLConnector) buildQuery(params *DatabaseQuery) string {
-// 	parseTags(params.Model, &params.Fields)
-// 	var query string
-// 	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.Fields.String(), ","), params.Table)
-// 	if len(params.Condition) > 0 {
-// 		query += " WHERE "
-// 		for i, condition := range params.Condition {
-// 			if i > 0 {
-// 				query += " AND "
-// 			}
-// 			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
-// 				query += fmt.Sprintf("%s %s '%%%s%%'", condition.Field, condition.Operator, condition.Value)
-// 			} else {
-// 				switch v := condition.Value.(type) {
-// 				case int, int32, int64, float32, float64:
-// 					query += fmt.Sprintf("%s %s %v", condition.Field, condition.Operator, v)
-// 				default:
-// 					query += fmt.Sprintf("%s %s '%s'", condition.Field, condition.Operator, condition.Value)
-// 				}
-// 			}
-// 		}
-// 	}
-// 	if params.OrderBy != "" {
-// 		query += fmt.Sprintf(" ORDER BY %s", params.OrderBy)
-// 		if params.Ascending {
-// 			query += " ASC"
-// 		} else {
-// 			query += " DESC"
-// 		}
-// 	}
-// 	if params.Limit > 0 {
-// 		query += fmt.Sprintf(" LIMIT %d", params.Limit)
-// 	}
-// 	return query
-// }
-
-// func (s *SQLConnector) buildAdvancedQuery(params *DatabaseQuery, limit int, offset int, orderBy string, searchText string) string {
-// 	parseTags(params.Model, &params.Fields)
-// 	var query string
-// 	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.Fields.String(), ","), params.Table)
-// 	if len(params.Condition) > 0 || len(params.SearchFields) > 0 {
-// 		query += " WHERE "
-// 		for i, condition := range params.Condition {
-// 			if i > 0 {
-// 				query += " AND "
-// 			}
-// 			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
-// 				query += fmt.Sprintf("%s %s '%%%s%%'", condition.Field, condition.Operator, condition.Value)
-// 			} else {
-// 				switch v := condition.Value.(type) {
-// 				case int, int32, int64, float32, float64:
-// 					query += fmt.Sprintf("%s %s %v", condition.Field, condition.Operator, v)
-// 				default:
-// 					query += fmt.Sprintf("%s %s '%s'", condition.Field, condition.Operator, condition.Value)
-// 				}
-// 			}
-// 		}
-// 		for i, field := range params.SearchFields {
-// 			if len(params.Condition) > 0 || i > 0 {
-// 				query += " OR "
-// 			}
-// 			query += fmt.Sprintf("%s LIKE '%%%s%%'", field, searchText)
-// 		}
-// 	}
-// 	ob := params.OrderBy
-// 	if orderBy != "" {
-// 		ob = orderBy
-// 	}
-// 	if ob != "" {
-// 		query += fmt.Sprintf(" ORDER BY %s", ob)
-// 		if params.Ascending {
-// 			query += " ASC"
-// 		} else {
-// 			query += " DESC"
-// 		}
-// 	}
-// 	if params.Limit > 0 {
-// 		query += fmt.Sprintf(" LIMIT %d", params.Limit)
-// 	} else if limit > 0 {
-// 		query += fmt.Sprintf(" LIMIT %d", limit)
-// 	} else {
-// 		query += " LIMIT 10"
-// 	}
-// 	if offset > 0 {
-// 		query += fmt.Sprintf(" OFFSET %d", offset)
-// 	}
-// 	return query
-// }
-
 func (s *SQLConnector) buildAdvancedQuery(params *DatabaseQuery, limit int, offset int, orderBy string, searchText string) (string, []interface{}) {
-	parseTags(params.Model, &params.Fields)
+	parseTags(params.Model, &params.fields)
 	var query string
 	args := make([]interface{}, 0)
-	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.Fields.String(), ","), params.Table)
+	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.fields.String(), ","), params.Table)
 	if len(params.Condition) > 0 || len(params.SearchFields) > 0 {
 		query += " WHERE "
 		for i, condition := range params.Condition {
@@ -456,10 +361,10 @@ func (s *SQLConnector) buildAdvancedQuery(params *DatabaseQuery, limit int, offs
 	}
 	if ob != "" {
 		query += fmt.Sprintf(" ORDER BY %s", ob)
-		if params.Ascending {
-			query += " ASC"
-		} else {
+		if params.Descending {
 			query += " DESC"
+		} else {
+			query += " ASC"
 		}
 	}
 	if params.Limit > 0 {
@@ -581,7 +486,7 @@ func (s SQLConnector) First(r *http.Request, tableName string, model interface{}
 	queryProps.Model = model
 	queryProps.Condition = condition
 	queryProps.Limit = 1
-	fieldMap := parseTags(model, &queryProps.Fields)
+	fieldMap := parseTags(model, &queryProps.fields)
 	rows, err := s.doQuery(r, &queryProps)
 	if err != nil {
 		return fmt.Errorf("error querying database: %v", err)
@@ -617,7 +522,7 @@ func (s SQLConnector) All(r *http.Request, queryProps *DatabaseQuery) ([]interfa
 	if queryProps.Table == "" && queryProps.Model != nil {
 		queryProps.Table = getTableNameFromModel(s.TablePrefix, queryProps.Model)
 	}
-	fieldMap := parseTags(queryProps.Model, &queryProps.Fields)
+	fieldMap := parseTags(queryProps.Model, &queryProps.fields)
 	rows, err := s.doQuery(r, queryProps)
 	if err != nil {
 		return nil, fmt.Errorf("error querying database: %v", err)
@@ -655,7 +560,7 @@ func (s SQLConnector) All(r *http.Request, queryProps *DatabaseQuery) ([]interfa
 func (s SQLConnector) Query(r *http.Request, queryProps *DatabaseQuery) ([]interface{}, error) {
 	var fieldMap FieldMap
 	if queryProps.Model != nil {
-		fieldMap = parseTags(queryProps.Model, &queryProps.Fields)
+		fieldMap = parseTags(queryProps.Model, &queryProps.fields)
 	}
 	rows, err := s.doQuery(r, queryProps)
 	if err != nil {
@@ -700,7 +605,7 @@ func (s SQLConnector) doQuery(r *http.Request, queryProps *DatabaseQuery) (rows 
 		// iterate over endpoint.Query.Fields to check if orderBy is valid
 		if orderBy != "" {
 			found := false
-			for _, field := range queryProps.Fields {
+			for _, field := range queryProps.fields {
 				if field == orderBy {
 					found = true
 					break
@@ -708,6 +613,15 @@ func (s SQLConnector) doQuery(r *http.Request, queryProps *DatabaseQuery) (rows 
 			}
 			if !found {
 				return nil, fmt.Errorf("invalid field '%s' used for orderBy", orderBy)
+			}
+		}
+
+		direction := r.URL.Query().Get("direction")
+		if direction != "" {
+			if direction != "asc" && direction != "desc" {
+				return nil, fmt.Errorf("invalid direction '%s' used for orderBy", direction)
+			} else if direction == "desc" {
+				queryProps.Descending = true
 			}
 		}
 
