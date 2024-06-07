@@ -517,26 +517,32 @@ func (s SQLConnector) First(r *http.Request, tableName string, model interface{}
 	}
 	return nil
 }
+func (s SQLConnector) All(r *http.Request, models interface{}, queryProps *DatabaseQuery) error {
+	// Ensure models is a pointer to a slice
+	val := reflect.ValueOf(models)
+	if val.Kind() != reflect.Ptr || val.Elem().Kind() != reflect.Slice {
+		return fmt.Errorf("error handling %s: models must be a pointer to a slice", val.Type())
+	}
 
-func (s SQLConnector) All(r *http.Request, queryProps *DatabaseQuery) ([]interface{}, error) {
 	if queryProps.Table == "" && queryProps.Model != nil {
 		queryProps.Table = getTableNameFromModel(s.TablePrefix, queryProps.Model)
 	}
 	fieldMap := parseTags(queryProps.Model, &queryProps.fields)
 	rows, err := s.doQuery(r, queryProps)
 	if err != nil {
-		return nil, fmt.Errorf("error querying database: %v", err)
+		return fmt.Errorf("error querying database: %v", err)
 	}
 	defer rows.Close()
-
-	var results []interface{}
 	columns, _ := rows.Columns()
+
+	// scan rows into "models" slice
 	for rows.Next() {
 		scanArgs := make([]interface{}, len(columns))
-		val := reflect.New(reflect.TypeOf(queryProps.Model).Elem())
+		modelType := reflect.TypeOf(queryProps.Model).Elem()
+		modelVal := reflect.New(modelType)
 		for i, column := range columns {
 			if field, ok := fieldMap[column]; ok {
-				fieldVal := val.Elem().FieldByName(field)
+				fieldVal := modelVal.Elem().FieldByName(field)
 				if fieldVal.IsValid() && fieldVal.CanAddr() {
 					scanArgs[i] = fieldVal.Addr().Interface()
 				} else {
@@ -550,11 +556,11 @@ func (s SQLConnector) All(r *http.Request, queryProps *DatabaseQuery) ([]interfa
 		}
 		err = rows.Scan(scanArgs...)
 		if err != nil {
-			return nil, fmt.Errorf("error scanning row: %v", err)
+			return fmt.Errorf("error scanning row: %v", err)
 		}
-		results = append(results, val.Interface())
+		val.Elem().Set(reflect.Append(val.Elem(), modelVal.Elem()))
 	}
-	return results, nil
+	return nil
 }
 
 func (s SQLConnector) Query(r *http.Request, queryProps *DatabaseQuery) ([]interface{}, error) {
