@@ -79,8 +79,13 @@ type TestModel struct {
 }
 type TestRelatedModel struct {
 	ID          uuid.UUID `db_column:"id"`
-	TestModelID uuid.UUID `db_column:"test_model_id" db_fk:"orm_testmodel(id)" db_fk_on_delete:"cascade"`
+	TestModelID uuid.UUID `db_column:"test_model_id" db_fk:"orm_testmodel(id)" db_nullable:"" db_fk_on_delete:"set null"`
 	StringValue string    `db:"string_value"`
+}
+
+var TABLES = []interface{}{
+	&TestModel{},
+	&TestRelatedModel{},
 }
 
 func TestConnectDatabase(t *testing.T) {
@@ -98,7 +103,7 @@ func TestPingDatabase(t *testing.T) {
 }
 
 func TestCreateTables(t *testing.T) {
-	err := connector.CreateTables(&TestModel{}, &TestRelatedModel{})
+	err := connector.CreateTables(TABLES...)
 	if err != nil {
 		t.Errorf("error should be nil but was: %s", err)
 	}
@@ -323,6 +328,23 @@ func TestSelectPageTwo(t *testing.T) {
 	}
 }
 
+func TestSelectUsingSearch(t *testing.T) {
+	r := getFakeRequestWithQuery("", "", "", "test 2")
+	models := []TestModel{}
+	err := connector.All(r, &models, &DatabaseQuery{
+		Model:        &TestModel{},
+		AllowSearch:  true,
+		SearchFields: []string{"string_value"},
+	})
+	if err != nil {
+		t.Errorf("error should be nil, but was: %s", err)
+	}
+	// print models
+	for _, model := range models {
+		t.Logf("Model: %v", model)
+	}
+}
+
 func TestDeleteOne(t *testing.T) {
 	r := getFakeHttpRequestWithContext()
 	err := connector.DeleteById(r, &TestModel{}, modelId)
@@ -336,5 +358,12 @@ func TestDeleteAll(t *testing.T) {
 	err := connector.Delete(r, &TestModel{})
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
+	}
+}
+
+func TestDropTables(t *testing.T) {
+	err := connector.DropTables(TABLES...)
+	if err != nil {
+		t.Errorf("error should be nil but was: %s", err)
 	}
 }
