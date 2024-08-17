@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+
+	_ "github.com/lib/pq"
 )
 
 var defaultTablePrefix = "gpo_"
@@ -32,6 +34,18 @@ type DatabaseQuery struct {
 	SearchFields    Fields
 }
 
+type DatabaseDelete struct {
+	Table     string `json:"table"`
+	Model     interface{}
+	Condition []Condition
+}
+
+type DatabaseUpdate struct {
+	Table     string `json:"table"`
+	Fields    Fields `json:"fields"`
+	Condition []Condition
+}
+
 // Column represents a column in a database table
 type Column struct {
 	// Name is the name of the column, for example "id"
@@ -50,6 +64,8 @@ type Column struct {
 type ForeignKey struct {
 	ColumnName string
 	References string // format: "table(column)"
+	// On delete
+	OnDelete string
 }
 
 // Table represents a database table
@@ -132,11 +148,24 @@ func getColumnsAndForeignKeysFromStruct(s interface{}) ([]Column, []ForeignKey) 
 
 		fk, ok := field.Tag.Lookup("db_fk")
 		if ok {
-			foreignKeys = append(foreignKeys, ForeignKey{ColumnName: columnName, References: fk})
+			onDeleteVal, onDeleteFound := field.Tag.Lookup("db_fk_on_delete")
+			if onDeleteFound {
+				foreignKeys = append(foreignKeys, ForeignKey{ColumnName: columnName, References: fk, OnDelete: onDeleteVal})
+			} else {
+				foreignKeys = append(foreignKeys, ForeignKey{ColumnName: columnName, References: fk})
+			}
 		}
 	}
 
 	return columns, foreignKeys
+}
+
+func validateOnDeleteText(text string) bool {
+	switch strings.ToUpper(text) {
+	case "NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT":
+		return true
+	}
+	return false
 }
 
 func _createTable(db *sql.DB, table Table) error {
@@ -170,8 +199,17 @@ func _createTable(db *sql.DB, table Table) error {
 		table := parts[0]
 		column := strings.TrimSuffix(parts[1], ")")
 
+		// Check if the ON DELETE clause is set
+		onDeleteText := ""
+		if fk.OnDelete != "" {
+			if !validateOnDeleteText(fk.OnDelete) {
+				return fmt.Errorf("invalid ON DELETE clause: %s", fk.OnDelete)
+			}
+			onDeleteText = fmt.Sprintf(" ON DELETE %s", strings.ToUpper(fk.OnDelete))
+		}
+
 		// Correctly format the REFERENCES clause
-		sql += fmt.Sprintf("FOREIGN KEY (%s) REFERENCES %s(%s),", fk.ColumnName, table, column)
+		sql += fmt.Sprintf("FOREIGN KEY (%s) REFERENCES %s(%s)%s,", fk.ColumnName, table, column, onDeleteText)
 	}
 
 	// Remove trailing comma and close parentheses
@@ -248,7 +286,7 @@ func (s *SQLConnector) CreateDatabase(dbName string) error {
 }
 
 // CreateTables creates tables in the database for the given models (table names are populated from the struct names)
-func (s *SQLConnector) CreateTables(models []interface{}) error {
+func (s *SQLConnector) CreateTables(models ...interface{}) error {
 	for _, model := range models {
 		err := s.CreateTable(model)
 		if err != nil {
@@ -461,7 +499,7 @@ func parseTags(model interface{}, fields *Fields) FieldMap {
 	return fieldMap
 }
 
-func (s SQLConnector) First(r *http.Request, tableName string, model interface{}, conditionOrId interface{}) error {
+func (s SQLConnector) First(r *http.Request, model interface{}, conditionOrId interface{}) error {
 	if conditionOrId == nil {
 		return fmt.Errorf("conditionOrId cannot be nil")
 	}
@@ -479,10 +517,7 @@ func (s SQLConnector) First(r *http.Request, tableName string, model interface{}
 		}
 	}
 	var queryProps DatabaseQuery
-	queryProps.Table = tableName
-	if tableName == "" {
-		queryProps.Table = getTableNameFromModel(s.TablePrefix, model)
-	}
+	queryProps.Table = getTableNameFromModel(s.TablePrefix, model)
 	queryProps.Model = model
 	queryProps.Condition = condition
 	queryProps.Limit = 1
@@ -600,6 +635,147 @@ func (s SQLConnector) Query(r *http.Request, queryProps *DatabaseQuery) ([]inter
 		results = append(results, val.Interface())
 	}
 	return results, nil
+}
+
+func (s SQLConnector) Delete(r *http.Request, model interface{}, condition ...Condition) error {
+	deleteStmt := DatabaseDelete{
+		Table:     getTableNameFromModel(s.TablePrefix, model),
+		Condition: condition,
+	}
+
+	db, err := sql.Open(s.DriverName, s.DatasourceName)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	// Start the delete statement
+	sql := fmt.Sprintf("DELETE FROM %s", deleteStmt.Table)
+
+	// Add the conditions
+	if len(deleteStmt.Condition) > 0 {
+		sql += " WHERE "
+		for i, condition := range deleteStmt.Condition {
+			if i > 0 {
+				sql += " AND "
+			}
+			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
+				sql += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, i+1)
+			} else {
+				switch condition.Value.(type) {
+				case int, int32, int64, float32, float64:
+					sql += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, i+1)
+				default:
+					sql += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, i+1)
+				}
+			}
+		}
+	}
+	// Execute the delete statement
+	_, err = db.Exec(sql)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s SQLConnector) DeleteById(r *http.Request, model interface{}, id interface{}) error {
+	return s.Delete(r, model, Condition{
+		Field:    "id",
+		Operator: "=",
+		Value:    id,
+	})
+}
+
+func (s SQLConnector) Update(r *http.Request, model interface{}) error {
+	updateStmt := DatabaseUpdate{
+		Table: getTableNameFromModel(s.TablePrefix, model),
+	}
+	parseTags(model, &updateStmt.Fields)
+	val := reflect.ValueOf(model)
+	if val.Kind() == reflect.Ptr {
+		val = val.Elem()
+	}
+	t := val.Type()
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if field.Tag.Get("db_column") == "id" {
+			updateStmt.Condition = []Condition{
+				{
+					Field:    "id",
+					Operator: "=",
+					Value:    val.Field(i).Interface(),
+				},
+			}
+			break
+		}
+	}
+	q, args, err := s.buildUpdateString(&updateStmt, model)
+	if err != nil {
+		return err
+	}
+	db, err := sql.Open(s.DriverName, s.DatasourceName)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	// Prepare the query
+	stmt, err := db.PrepareContext(r.Context(), q)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	// Execute the query
+	_, err = stmt.Exec(args...)
+	return err
+}
+
+func (s *SQLConnector) buildUpdateString(params *DatabaseUpdate, model interface{}) (string, []interface{}, error) {
+	var query string
+	query = fmt.Sprintf("UPDATE %s SET ", params.Table)
+	val := reflect.ValueOf(model)
+	if val.Kind() == reflect.Ptr {
+		val = val.Elem()
+	}
+	t := val.Type()
+	args := make([]interface{}, 0)
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if field.Tag.Get("db_column") == "id" {
+			continue
+		}
+		if field.Tag.Get("db_column") == "" {
+			return "", nil, fmt.Errorf("no db_column tag found for field %s", field.Name)
+		}
+		query += fmt.Sprintf("%s = $%d, ", field.Tag.Get("db_column"), len(args)+1)
+		args = append(args, val.Field(i).Interface())
+	}
+	query = strings.TrimSuffix(query, ", ")
+	if len(params.Condition) > 0 {
+		query += " WHERE "
+		for i, condition := range params.Condition {
+			if i > 0 {
+				query += " AND "
+			}
+			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
+				query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
+				args = append(args, "%"+condition.Value.(string)+"%")
+			} else {
+				switch v := condition.Value.(type) {
+				case int, int32, int64, float32, float64:
+					query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
+					args = append(args, v)
+				default:
+					query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
+					args = append(args, condition.Value)
+				}
+			}
+		}
+	}
+	return query, args, nil
 }
 
 func (s SQLConnector) doQuery(r *http.Request, queryProps *DatabaseQuery) (rows *sql.Rows, err error) {

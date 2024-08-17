@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:16.0-alpine
+    container_name: go-postgresql-orm-db
+    environment:
+      POSTGRES_USER: test_orm
+      POSTGRES_PASSWORD: test_orm
+      POSTGRES_DB: test_orm
+    ports:
+      - "5432:5432"
