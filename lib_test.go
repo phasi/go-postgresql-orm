@@ -156,12 +156,15 @@ func TestSelectRelatedModel(t *testing.T) {
 
 func TestUpdateModel(t *testing.T) {
 	r := getFakeHttpRequestWithContext()
-	err := connector.Update(r, &TestModel{
+	affected, err := connector.Update(r, &TestModel{
 		ID:          modelId,
 		StringValue: "updated",
 		IntValue:    200,
 		UniqueValue: "thisisunique",
 	})
+	if affected == 0 {
+		t.Error("update should have succeeded but nothing was changed")
+	}
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
