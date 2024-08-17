@@ -332,7 +332,7 @@ func (s SQLConnector) DeleteById(r *http.Request, model interface{}, id interfac
 	})
 }
 
-func (s SQLConnector) Update(r *http.Request, model interface{}) error {
+func (s SQLConnector) Update(r *http.Request, model interface{}) (int64, error) {
 	updateStmt := DatabaseUpdate{
 		Table: getTableNameFromModel(s.TablePrefix, model),
 	}
@@ -357,24 +357,27 @@ func (s SQLConnector) Update(r *http.Request, model interface{}) error {
 	}
 	q, args, err := buildUpdateStmt(&updateStmt, model)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	db, err := sql.Open(s.DriverName, s.DatasourceName)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer db.Close()
 
 	// Prepare the query
 	stmt, err := db.PrepareContext(r.Context(), q)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer stmt.Close()
 
 	// Execute the query
-	_, err = stmt.Exec(args...)
-	return err
+	result, err := stmt.Exec(args...)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func (s SQLConnector) doQuery(r *http.Request, queryProps *DatabaseQuery) (rows *sql.Rows, err error) {
