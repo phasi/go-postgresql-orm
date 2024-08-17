@@ -4,7 +4,7 @@ go-postgresql-orm is a simple postgresql capable ORM library.
 
 ## Getting started
 
-This library is designed to work with net/http library. It means the CRUD operations expect a pointer to the original http.Request to be passed so that it's context may be canceled upon failed database operation.
+This library is designed to work with net/http library. It means the CRUD operations expect a pointer to the original http.Request to be passed so that it's context may be canceled upon errors, like client timeout.
 
 If you are not using this library in your web server you can just simulate/mock the http.Request.
 
