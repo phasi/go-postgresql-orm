@@ -1,93 +1,145 @@
 # go-postgres-orm
 
-
+go-postgresql-orm is a simple postgresql capable ORM library.
 
 ## Getting started
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+This library is designed to work with net/http library. It means the CRUD operations expect a pointer to the original http.Request to be passed so that it's context may be canceled upon failed database operation.
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+If you are not using this library in your web server you can just simulate/mock the http.Request.
 
-## Add your files
+### Initializing SQLConnector
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
+```go
+var connector SQLConnector = SQLConnector{
+	DriverName: "postgres",
+	DatasourceName: fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		"localhost",
+		"5432",
+		"test_orm",
+		"test_orm",
+		"test_orm",
+		"disable", // options: verify-full, verify-ca, disable
+	),
+	TablePrefix: "orm_", // if you do not use prefix the default prefix (gpo_) is used
+}
+```
+
+### Preparing your models for database
+
+You can tag your models' properties as per below example. It affects how the tables are configured upon creation.
+
+#### Supported tags
+
+NOTE THAT PRIMARY KEY MUST ALWAYS BE "id" in database, so where ever you put 'id' will make that column become the primary key.
+
+| Tag name         | Description                                          |
+| ---------------- | ---------------------------------------------------- |
+| db_column        | Name of the column in database                       |
+| db_column_length | Max length of the column                             |
+| db_nullable      | Presence of this tag makes the column nullable       |
+| db_unique        | Presence of this tag makes the column unique         |
+| db_fk            | Foreign key to another table and field (see example) |
+| db_fk_on_delete  | action when the relation is deleted e.g. "SET NULL"  |
+
+_Example:_
+
+```go
+type TestModel struct {
+	ID          uuid.UUID `db_column:"id"`
+	StringValue string    `db_column:"string_value" db_column_length:"10"`
+	IntValue    int       `db_column:"int_value"`
+	UniqueValue string    `db_column:"unique_value" db_unique:""`
+}
+type TestRelatedModel struct {
+	ID          uuid.UUID `db_column:"id"`
+	TestModelID uuid.UUID `db_column:"test_model_id" db_fk:"orm_testmodel(id)" db_nullable:"" db_fk_on_delete:"set null"`
+	StringValue string    `db_column:"string_value"`
+}
+```
+
+### Connecting to database
+
+You should do this only once when initializing database, the underlying sql library supports connection pooling so there is no need to initialize more than one connectors per database.
+
+_Example:_
+
+```go
+	err := connector.Connect()
+	if err != nil {
+		// handle error
+	}
+```
+
+### Ping database to verify connection is working
+
+_Example:_
+
+```go
+	err := connector.Ping()
+	if err != nil {
+		// handle error
+	}
+```
+
+### Automatically create tables from models
+
+go-postgresql-orm creates the tables automatically based on table prefix and model names.
+
+_Example:_
+
+```go
+
+var TABLES = []interface{}{
+	&TestModel{},
+	&TestRelatedModel{},
+}
+
+err := connector.CreateTables(TABLES...)
+if err != nil {
+    // handle error
+}
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.com/naoapp/go-libraries/go-postgres-orm.git
-git branch -M main
-git push -uf origin main
+
+### Insert a model
+
+You can pass your model to the insert function (assuming the table was created).
+
+_Example:_
+
+```go
+    // simulate http request (its context is automatically canceled on failed operation)
+    r, err := http.NewRequestWithContext(context.Background(), "GET", "/", nil)
+    // do insert
+	err := connector.Insert(r, &TestModel{
+		ID:          "4d701cf7-e218-4499-8092-7c085118e373", // can also be uuid.UUID
+		StringValue: "test",
+		IntValue:    10,
+		UniqueValue: "thisisunique",
+	})
+	if err != nil {
+		// handle error
+	}
 ```
 
-## Integrate with your tools
+### Select a model
 
-- [ ] [Set up project integrations](https://gitlab.com/naoapp/go-libraries/go-postgres-orm/-/settings/integrations)
+Selects a single row from database
 
-## Collaborate with your team
+_Example:_
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+```go
+    // simulate http request (its context is automatically canceled on failed operation)
+    r, err := http.NewRequestWithContext(context.Background(), "GET", "/", nil)
+	m := &TestModel{}
+	err := connector.First(r, m, "4d701cf7-e218-4499-8092-7c085118e373") // can also be uuid.UUID
+	if err != nil {
+		// handle error
+	}
+    fmt.Println(m)
+```
 
-## Test and Deploy
+## Want to read more?
 
-Use the built-in continuous integration in GitLab.
-
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
-
-***
-
-# Editing this README
-
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
-
-## Suggestions for a good README
-
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
-
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
-
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+There are more examples in the tests. There you can find how to use for example pagination, search, direction, offset and limit.
