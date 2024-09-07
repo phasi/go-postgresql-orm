@@ -1,43 +1,63 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
-	"net/http"
 	"reflect"
-	"strconv"
 
 	_ "github.com/lib/pq"
 )
 
 const defaultTablePrefix = "gpo_"
 
-type SQLConnector struct {
-	DriverName     string
-	DatasourceName string
-	db             *sql.DB
-	TablePrefix    string
+type PostgreSQLConnector struct {
+	Host        string  `json:"host"`
+	Port        string  `json:"port"`
+	User        string  `json:"user"`
+	Password    string  `json:"password"`
+	Database    string  `json:"database"`
+	SSLMode     string  `json:"sslmode"` // options: verify-full, verify-ca, disable
+	db          *sql.DB // db connection
+	TablePrefix string
 }
 
-func (s *SQLConnector) Connect() (err error) {
-	s.db, err = sql.Open(s.DriverName, s.DatasourceName)
+func (s *PostgreSQLConnector) getConnectionString() string {
+	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		s.Host,
+		s.Port,
+		s.User,
+		s.Password,
+		s.Database,
+		s.SSLMode,
+	)
+}
+
+func (s *PostgreSQLConnector) CloseConnection() {
+	if s.db != nil {
+		s.db.Close()
+	}
+}
+
+func (s *PostgreSQLConnector) Connect() (err error) {
+	s.db, err = sql.Open("postgres", s.getConnectionString())
 	return err
 }
 
-func (s *SQLConnector) Close() error {
+func (s *PostgreSQLConnector) Close() error {
 	return s.db.Close()
 }
 
-func (s *SQLConnector) GetConnection() *sql.DB {
+func (s *PostgreSQLConnector) GetConnection() *sql.DB {
 	return s.db
 }
 
-func (s *SQLConnector) Ping() error {
+func (s *PostgreSQLConnector) Ping() error {
 	db := s.GetConnection()
 	return db.Ping()
 }
 
-func (s *SQLConnector) CreateDatabase(dbName string) error {
+func (s *PostgreSQLConnector) CreateDatabase(dbName string) error {
 	db := s.GetConnection()
 	// Check if the database exists
 	var exists bool
@@ -52,7 +72,7 @@ func (s *SQLConnector) CreateDatabase(dbName string) error {
 }
 
 // CreateTable creates a single table in the database for the given model
-func (s *SQLConnector) CreateTable(model interface{}) error {
+func (s *PostgreSQLConnector) CreateTable(model interface{}) error {
 	tableName := getTableNameFromModel(s.TablePrefix, model)
 	columns, foreignKeys := getColumnsAndForeignKeysFromStruct(model)
 	table := Table{Name: tableName, Columns: columns, ForeignKeys: foreignKeys}
@@ -60,7 +80,7 @@ func (s *SQLConnector) CreateTable(model interface{}) error {
 	return _createTable(db, table)
 }
 
-func (s *SQLConnector) DropTable(modelOrTableName interface{}, cascade bool) error {
+func (s *PostgreSQLConnector) DropTable(modelOrTableName interface{}, cascade bool) error {
 	var tableName string
 	switch v := modelOrTableName.(type) {
 	case string:
@@ -81,7 +101,7 @@ func (s *SQLConnector) DropTable(modelOrTableName interface{}, cascade bool) err
 }
 
 // CreateTables creates tables in the database for the given models (table names are populated from the struct names)
-func (s *SQLConnector) CreateTables(models ...interface{}) error {
+func (s *PostgreSQLConnector) CreateTables(models ...interface{}) error {
 	for _, model := range models {
 		err := s.CreateTable(model)
 		if err != nil {
@@ -91,7 +111,7 @@ func (s *SQLConnector) CreateTables(models ...interface{}) error {
 	return nil
 }
 
-func (s *SQLConnector) DropTables(modelsOrTableNames ...interface{}) error {
+func (s *PostgreSQLConnector) DropTables(modelsOrTableNames ...interface{}) error {
 	for _, modelOrTableName := range modelsOrTableNames {
 		err := s.DropTable(modelOrTableName, true) // true for CASCADE
 		if err != nil {
@@ -101,7 +121,7 @@ func (s *SQLConnector) DropTables(modelsOrTableNames ...interface{}) error {
 	return nil
 }
 
-func (s SQLConnector) Insert(r *http.Request, model interface{}) (err error) {
+func (s PostgreSQLConnector) Insert(ctx context.Context, model interface{}) (err error) {
 	insertStmt := DatabaseInsert{
 		Table: getTableNameFromModel(s.TablePrefix, model),
 	}
@@ -110,25 +130,19 @@ func (s SQLConnector) Insert(r *http.Request, model interface{}) (err error) {
 	if err != nil {
 		return
 	}
-	db, err := sql.Open(s.DriverName, s.DatasourceName)
-	if err != nil {
-		return
-	}
-	defer db.Close()
-
+	db := s.GetConnection()
 	// Prepare the query
-	stmt, err := db.PrepareContext(r.Context(), q)
+	stmt, err := db.PrepareContext(ctx, q)
 	if err != nil {
 		return
 	}
 	defer stmt.Close()
-
 	// Execute the query
-	_, err = stmt.Exec(args...)
+	_, err = stmt.ExecContext(ctx, args...)
 	return
 }
 
-func (s SQLConnector) First(r *http.Request, model interface{}, conditionOrId interface{}) error {
+func (s PostgreSQLConnector) First(ctx context.Context, model interface{}, conditionOrId interface{}) error {
 	if conditionOrId == nil {
 		return fmt.Errorf("conditionOrId cannot be nil")
 	}
@@ -151,7 +165,7 @@ func (s SQLConnector) First(r *http.Request, model interface{}, conditionOrId in
 	queryProps.Condition = condition
 	queryProps.Limit = 1
 	fieldMap := parseTags(model, &queryProps.fields)
-	rows, err := s.doQuery(r, &queryProps)
+	rows, err := s.doQuery(ctx, &queryProps)
 	if err != nil {
 		return fmt.Errorf("error querying database: %v", err)
 	}
@@ -181,7 +195,7 @@ func (s SQLConnector) First(r *http.Request, model interface{}, conditionOrId in
 	}
 	return nil
 }
-func (s SQLConnector) All(r *http.Request, models interface{}, queryProps *DatabaseQuery) error {
+func (s PostgreSQLConnector) All(ctx context.Context, models interface{}, queryProps *DatabaseQuery) error {
 	// Ensure models is a pointer to a slice
 	val := reflect.ValueOf(models)
 	if val.Kind() != reflect.Ptr || val.Elem().Kind() != reflect.Slice {
@@ -192,7 +206,7 @@ func (s SQLConnector) All(r *http.Request, models interface{}, queryProps *Datab
 		queryProps.Table = getTableNameFromModel(s.TablePrefix, queryProps.Model)
 	}
 	fieldMap := parseTags(queryProps.Model, &queryProps.fields)
-	rows, err := s.doQuery(r, queryProps)
+	rows, err := s.doQuery(ctx, queryProps)
 	if err != nil {
 		return fmt.Errorf("error querying database: %v", err)
 	}
@@ -227,12 +241,12 @@ func (s SQLConnector) All(r *http.Request, models interface{}, queryProps *Datab
 	return nil
 }
 
-func (s SQLConnector) Query(r *http.Request, queryProps *DatabaseQuery) ([]interface{}, error) {
+func (s PostgreSQLConnector) Query(ctx context.Context, queryProps *DatabaseQuery) ([]interface{}, error) {
 	var fieldMap FieldMap
 	if queryProps.Model != nil {
 		fieldMap = parseTags(queryProps.Model, &queryProps.fields)
 	}
-	rows, err := s.doQuery(r, queryProps)
+	rows, err := s.doQuery(ctx, queryProps)
 	if err != nil {
 		return nil, fmt.Errorf("error querying database: %v", err)
 	}
@@ -266,17 +280,13 @@ func (s SQLConnector) Query(r *http.Request, queryProps *DatabaseQuery) ([]inter
 	return results, nil
 }
 
-func (s SQLConnector) Delete(r *http.Request, model interface{}, condition ...Condition) error {
+func (s PostgreSQLConnector) Delete(ctx context.Context, model interface{}, condition ...Condition) error {
 	deleteStmt := DatabaseDelete{
 		Table:     getTableNameFromModel(s.TablePrefix, model),
 		Condition: condition,
 	}
 
-	db, err := sql.Open(s.DriverName, s.DatasourceName)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
+	db := s.GetConnection()
 
 	// Start the delete statement
 	sql := fmt.Sprintf("DELETE FROM %s", deleteStmt.Table)
@@ -324,15 +334,15 @@ func (s SQLConnector) Delete(r *http.Request, model interface{}, condition ...Co
 	return nil
 }
 
-func (s SQLConnector) DeleteById(r *http.Request, model interface{}, id interface{}) error {
-	return s.Delete(r, model, Condition{
+func (s PostgreSQLConnector) DeleteById(ctx context.Context, model interface{}, id interface{}) error {
+	return s.Delete(ctx, model, Condition{
 		Field:    "id",
 		Operator: "=",
 		Value:    id,
 	})
 }
 
-func (s SQLConnector) Update(r *http.Request, model interface{}) (int64, error) {
+func (s PostgreSQLConnector) Update(ctx context.Context, model interface{}) (int64, error) {
 	updateStmt := DatabaseUpdate{
 		Table: getTableNameFromModel(s.TablePrefix, model),
 	}
@@ -359,14 +369,10 @@ func (s SQLConnector) Update(r *http.Request, model interface{}) (int64, error) 
 	if err != nil {
 		return 0, err
 	}
-	db, err := sql.Open(s.DriverName, s.DatasourceName)
-	if err != nil {
-		return 0, err
-	}
-	defer db.Close()
+	db := s.GetConnection()
 
 	// Prepare the query
-	stmt, err := db.PrepareContext(r.Context(), q)
+	stmt, err := db.PrepareContext(ctx, q)
 	if err != nil {
 		return 0, err
 	}
@@ -380,61 +386,17 @@ func (s SQLConnector) Update(r *http.Request, model interface{}) (int64, error) 
 	return result.RowsAffected()
 }
 
-func (s SQLConnector) doQuery(r *http.Request, queryProps *DatabaseQuery) (rows *sql.Rows, err error) {
+func (s PostgreSQLConnector) doQuery(ctx context.Context, queryProps *DatabaseQuery) (rows *sql.Rows, err error) {
 	var q string
 	var args []interface{}
 	if queryProps.AllowPagination || queryProps.AllowSearch {
-		// get "orderBy" from request query params
-		orderBy := r.URL.Query().Get("orderBy")
-		// iterate over endpoint.Query.Fields to check if orderBy is valid
-		if orderBy != "" {
-			found := false
-			for _, field := range queryProps.fields {
-				if field == orderBy {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return nil, fmt.Errorf("invalid field '%s' used for orderBy", orderBy)
-			}
-		}
-
-		direction := r.URL.Query().Get("direction")
-		if direction != "" {
-			if direction != "asc" && direction != "desc" {
-				return nil, fmt.Errorf("invalid direction '%s' used for orderBy", direction)
-			} else if direction == "desc" {
-				queryProps.Descending = true
-			}
-		}
-
-		// get "offset" from request query params
-		offset := 0
-		if r.URL.Query().Get("offset") != "" {
-			offset, err = strconv.Atoi(r.URL.Query().Get("offset"))
-			if err != nil {
-				return nil, err
-			}
-		}
-		// get "limit" from request query params
-		limit := 0
-		if r.URL.Query().Get("limit") != "" {
-			limit, err = strconv.Atoi(r.URL.Query().Get("limit"))
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		searchText := r.URL.Query().Get("search")
-
-		q, args = buildAdvancedQuery(queryProps, limit, offset, orderBy, searchText)
+		q, args = buildAdvancedQuery(queryProps)
 	} else {
 		q, args = buildQuery(queryProps)
 	}
 	db := s.GetConnection()
 	// Perform a query
-	rows, err = db.QueryContext(r.Context(), q, args...)
+	rows, err = db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -15,9 +15,11 @@ type DatabaseQuery struct {
 	Condition       []Condition
 	OrderBy         string
 	Limit           int
+	Offset          int
 	Descending      bool
 	AllowPagination bool
 	AllowSearch     bool
+	SearchText      string
 	SearchFields    Fields
 }
 

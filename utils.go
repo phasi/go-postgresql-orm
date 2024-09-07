@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"net/http"
 	"reflect"
 	"strconv"
 	"strings"
@@ -226,7 +227,29 @@ func buildQuery(params *DatabaseQuery) (string, []interface{}) {
 	return query, args
 }
 
-func buildAdvancedQuery(params *DatabaseQuery, limit int, offset int, orderBy string, searchText string) (string, []interface{}) {
+func ParseQueryParamsFromRequest(r *http.Request, query *DatabaseQuery) {
+	query.Limit = 10
+	query.Offset = 0
+	query.Descending = false
+	if limit := r.URL.Query().Get("limit"); limit != "" {
+		query.Limit, _ = strconv.Atoi(limit)
+	}
+	if offset := r.URL.Query().Get("offset"); offset != "" {
+		query.Offset, _ = strconv.Atoi(offset)
+	}
+	if orderBy := r.URL.Query().Get("order_by"); orderBy != "" {
+		query.OrderBy = orderBy
+	}
+	if order := r.URL.Query().Get("order"); order == "desc" {
+		query.Descending = true
+	}
+	if searchText := r.URL.Query().Get("search"); searchText != "" {
+		query.SearchText = searchText
+	}
+
+}
+
+func buildAdvancedQuery(params *DatabaseQuery) (string, []interface{}) {
 	parseTags(params.Model, &params.fields)
 	var query string
 	args := make([]interface{}, 0)
@@ -256,13 +279,10 @@ func buildAdvancedQuery(params *DatabaseQuery, limit int, offset int, orderBy st
 				query += " OR "
 			}
 			query += fmt.Sprintf("%s LIKE $%d", field, len(args)+1)
-			args = append(args, "%"+searchText+"%")
+			args = append(args, "%"+params.SearchText+"%")
 		}
 	}
 	ob := params.OrderBy
-	if orderBy != "" {
-		ob = orderBy
-	}
 	if ob != "" {
 		query += fmt.Sprintf(" ORDER BY %s", ob)
 		if params.Descending {
@@ -274,15 +294,12 @@ func buildAdvancedQuery(params *DatabaseQuery, limit int, offset int, orderBy st
 	if params.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
 		args = append(args, params.Limit)
-	} else if limit > 0 {
-		query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
-		args = append(args, limit)
 	} else {
 		query += " LIMIT 10"
 	}
-	if offset > 0 {
+	if params.Offset > 0 {
 		query += fmt.Sprintf(" OFFSET $%d", len(args)+1)
-		args = append(args, offset)
+		args = append(args, params.Offset)
 	}
 	return query, args
 }

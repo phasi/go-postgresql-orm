@@ -10,16 +10,13 @@ import (
 	"github.com/google/uuid"
 )
 
-var connector SQLConnector = SQLConnector{
-	DriverName: "postgres",
-	DatasourceName: fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		"localhost",
-		"5432",
-		"test_orm",
-		"test_orm",
-		"test_orm",
-		"disable", // options: verify-full, verify-ca, disable
-	),
+var connector PostgreSQLConnector = PostgreSQLConnector{
+	Host:        "localhost",
+	Port:        "5432",
+	User:        "test_orm",
+	Password:    "test_orm",
+	Database:    "test_orm",
+	SSLMode:     "disable", // options: verify-full, verify-ca, disable
 	TablePrefix: "orm_",
 }
 
@@ -111,7 +108,7 @@ func TestCreateTables(t *testing.T) {
 
 func TestInsertModel(t *testing.T) {
 	r := getFakeHttpRequestWithContext()
-	err := connector.Insert(r, &TestModel{
+	err := connector.Insert(r.Context(), &TestModel{
 		ID:          modelId,
 		StringValue: "test",
 		IntValue:    10,
@@ -125,7 +122,7 @@ func TestInsertModel(t *testing.T) {
 func TestSelectModel(t *testing.T) {
 	r := getFakeHttpRequestWithContext()
 	m := &TestModel{}
-	err := connector.First(r, m, modelId)
+	err := connector.First(r.Context(), m, modelId)
 	t.Logf("Original model: %v", m)
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
@@ -134,7 +131,7 @@ func TestSelectModel(t *testing.T) {
 
 func TestInsertRelatedModel(t *testing.T) {
 	r := getFakeHttpRequestWithContext()
-	err := connector.Insert(r, &TestRelatedModel{
+	err := connector.Insert(r.Context(), &TestRelatedModel{
 		ID:          relatedModelId,
 		TestModelID: modelId,
 		StringValue: "test related",
@@ -147,7 +144,7 @@ func TestInsertRelatedModel(t *testing.T) {
 func TestSelectRelatedModel(t *testing.T) {
 	r := getFakeHttpRequestWithContext()
 	m := &TestRelatedModel{}
-	err := connector.First(r, m, relatedModelId)
+	err := connector.First(r.Context(), m, relatedModelId)
 	t.Logf("Related model: %v", m)
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
@@ -156,7 +153,7 @@ func TestSelectRelatedModel(t *testing.T) {
 
 func TestUpdateModel(t *testing.T) {
 	r := getFakeHttpRequestWithContext()
-	affected, err := connector.Update(r, &TestModel{
+	affected, err := connector.Update(r.Context(), &TestModel{
 		ID:          modelId,
 		StringValue: "updated",
 		IntValue:    200,
@@ -173,7 +170,7 @@ func TestUpdateModel(t *testing.T) {
 func TestSelectUpdatedModel(t *testing.T) {
 	r := getFakeHttpRequestWithContext()
 	m := &TestModel{}
-	err := connector.First(r, m, modelId)
+	err := connector.First(r.Context(), m, modelId)
 	t.Logf("Updated model: %v", m)
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
@@ -189,7 +186,7 @@ func TestInsertMoreModels(t *testing.T) {
 			IntValue:    i,
 			UniqueValue: fmt.Sprintf("thisisunique%d", i),
 		}
-		err := connector.Insert(r, &model)
+		err := connector.Insert(r.Context(), &model)
 		if err != nil {
 			t.Errorf("error should be nil, but was: %s", err)
 		}
@@ -199,7 +196,7 @@ func TestInsertMoreModels(t *testing.T) {
 func TestSelectAllModels(t *testing.T) {
 	r := getFakeHttpRequestWithContext()
 	models := []TestModel{}
-	err := connector.All(r, &models, &DatabaseQuery{
+	err := connector.All(r.Context(), &models, &DatabaseQuery{
 		Model: &TestModel{},
 	})
 	if err != nil {
@@ -214,7 +211,7 @@ func TestSelectAllModels(t *testing.T) {
 func TestSelectAllModelsInDescendingOrder(t *testing.T) {
 	r := getFakeHttpRequestWithContext()
 	models := []TestModel{}
-	err := connector.All(r, &models, &DatabaseQuery{
+	err := connector.All(r.Context(), &models, &DatabaseQuery{
 		Model:      &TestModel{},
 		OrderBy:    "int_value",
 		Descending: true,
@@ -231,7 +228,7 @@ func TestSelectAllModelsInDescendingOrder(t *testing.T) {
 func TestSelectAllModelsWithinConditionRange(t *testing.T) {
 	r := getFakeHttpRequestWithContext()
 	models := []TestModel{}
-	err := connector.All(r, &models, &DatabaseQuery{
+	err := connector.All(r.Context(), &models, &DatabaseQuery{
 		Model: &TestModel{},
 		Condition: []Condition{
 			{
@@ -258,7 +255,7 @@ func TestSelectAllModelsWithinConditionRange(t *testing.T) {
 func TestSelectLimitedModels(t *testing.T) {
 	r := getFakeHttpRequestWithContext()
 	models := []TestModel{}
-	err := connector.All(r, &models, &DatabaseQuery{
+	err := connector.All(r.Context(), &models, &DatabaseQuery{
 		Model: &TestModel{},
 		Limit: 5,
 	})
@@ -274,7 +271,7 @@ func TestSelectLimitedModels(t *testing.T) {
 func TestSelectLimitedModelsWithCondition(t *testing.T) {
 	r := getFakeHttpRequestWithContext()
 	models := []TestModel{}
-	err := connector.All(r, &models, &DatabaseQuery{
+	err := connector.All(r.Context(), &models, &DatabaseQuery{
 		Model: &TestModel{},
 		Condition: []Condition{
 			{
@@ -302,10 +299,12 @@ func TestSelectLimitedModelsWithCondition(t *testing.T) {
 func TestSelectPageOne(t *testing.T) {
 	r := getFakeRequestWithQuery("", "5", "", "")
 	models := []TestModel{}
-	err := connector.All(r, &models, &DatabaseQuery{
+	query := &DatabaseQuery{
 		Model:           &TestModel{},
 		AllowPagination: true,
-	})
+	}
+	ParseQueryParamsFromRequest(r, query)
+	err := connector.All(r.Context(), &models, query)
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
@@ -318,10 +317,12 @@ func TestSelectPageOne(t *testing.T) {
 func TestSelectPageTwo(t *testing.T) {
 	r := getFakeRequestWithQuery("", "5", "5", "")
 	models := []TestModel{}
-	err := connector.All(r, &models, &DatabaseQuery{
+	query := &DatabaseQuery{
 		Model:           &TestModel{},
 		AllowPagination: true,
-	})
+	}
+	ParseQueryParamsFromRequest(r, query)
+	err := connector.All(r.Context(), &models, query)
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
@@ -334,11 +335,14 @@ func TestSelectPageTwo(t *testing.T) {
 func TestSelectUsingSearch(t *testing.T) {
 	r := getFakeRequestWithQuery("", "", "", "test 2")
 	models := []TestModel{}
-	err := connector.All(r, &models, &DatabaseQuery{
+	query := &DatabaseQuery{
 		Model:        &TestModel{},
 		AllowSearch:  true,
 		SearchFields: []string{"string_value"},
-	})
+	}
+	ParseQueryParamsFromRequest(r, query)
+	fmt.Println(query)
+	err := connector.All(r.Context(), &models, query)
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
@@ -350,7 +354,7 @@ func TestSelectUsingSearch(t *testing.T) {
 
 func TestDeleteOne(t *testing.T) {
 	r := getFakeHttpRequestWithContext()
-	err := connector.DeleteById(r, &TestModel{}, modelId)
+	err := connector.DeleteById(r.Context(), &TestModel{}, modelId)
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
@@ -358,7 +362,7 @@ func TestDeleteOne(t *testing.T) {
 
 func TestDeleteAll(t *testing.T) {
 	r := getFakeHttpRequestWithContext()
-	err := connector.Delete(r, &TestModel{})
+	err := connector.Delete(r.Context(), &TestModel{})
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}

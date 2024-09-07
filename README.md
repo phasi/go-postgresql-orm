@@ -4,24 +4,17 @@ go-postgresql-orm is a simple postgresql capable ORM library.
 
 ## Getting started
 
-This library is designed to work with net/http library. It means the CRUD operations expect a pointer to the original http.Request to be passed so that it's context may be canceled upon errors, like client timeout.
-
-If you are not using this library in your web server you can just simulate/mock the http.Request.
-
 ### Initializing SQLConnector
 
 ```go
-var connector SQLConnector = SQLConnector{
-	DriverName: "postgres",
-	DatasourceName: fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		"localhost",
-		"5432",
-		"test_orm",
-		"test_orm",
-		"test_orm",
-		"disable", // options: verify-full, verify-ca, disable
-	),
-	TablePrefix: "orm_", // if you do not use prefix the default prefix (gpo_) is used
+var connector PostgreSQLConnector = PostgreSQLConnector{
+	Host:        "localhost",
+	Port:        "5432",
+	User:        "test_orm",
+	Password:    "test_orm",
+	Database:    "test_orm",
+	SSLMode:     "disable", // options: verify-full, verify-ca, disable
+	TablePrefix: "orm_",
 }
 ```
 
@@ -109,10 +102,8 @@ You can pass your model to the insert function (assuming the table was created).
 _Example:_
 
 ```go
-    // simulate http request (its context is automatically canceled on failed operation)
-    r, err := http.NewRequestWithContext(context.Background(), "GET", "/", nil)
     // do insert
-	err := connector.Insert(r, &TestModel{
+	err := connector.Insert(context.Background(), &TestModel{
 		ID:          "4d701cf7-e218-4499-8092-7c085118e373", // can also be uuid.UUID
 		StringValue: "test",
 		IntValue:    10,
@@ -131,9 +122,8 @@ _Example:_
 
 ```go
     // simulate http request (its context is automatically canceled on failed operation)
-    r, err := http.NewRequestWithContext(context.Background(), "GET", "/", nil)
 	m := &TestModel{}
-	err := connector.First(r, m, "4d701cf7-e218-4499-8092-7c085118e373") // can also be uuid.UUID
+	err := connector.First(context.Background(), m, "4d701cf7-e218-4499-8092-7c085118e373") // can also be uuid.UUID
 	if err != nil {
 		// handle error
 	}
