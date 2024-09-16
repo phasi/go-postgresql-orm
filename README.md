@@ -103,7 +103,7 @@ _Example:_
 
 ```go
     // do insert
-	err := connector.Insert(context.Background(), &TestModel{
+	err := connector.Insert(&TestModel{
 		ID:          "4d701cf7-e218-4499-8092-7c085118e373", // can also be uuid.UUID
 		StringValue: "test",
 		IntValue:    10,
@@ -121,9 +121,8 @@ Selects a single row from database
 _Example:_
 
 ```go
-    // simulate http request (its context is automatically canceled on failed operation)
 	m := &TestModel{}
-	err := connector.First(context.Background(), m, "4d701cf7-e218-4499-8092-7c085118e373") // can also be uuid.UUID
+	err := connector.First(m, "4d701cf7-e218-4499-8092-7c085118e373") // can also be uuid.UUID
 	if err != nil {
 		// handle error
 	}
