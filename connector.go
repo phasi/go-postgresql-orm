@@ -121,7 +121,15 @@ func (s *PostgreSQLConnector) DropTables(modelsOrTableNames ...interface{}) erro
 	return nil
 }
 
-func (s PostgreSQLConnector) Insert(ctx context.Context, model interface{}) (err error) {
+func (s PostgreSQLConnector) InsertWithContext(ctx context.Context, model interface{}) (err error) {
+	return s.insert(ctx, model)
+}
+
+func (s PostgreSQLConnector) Insert(model interface{}) (err error) {
+	return s.insert(context.Background(), model)
+}
+
+func (s PostgreSQLConnector) insert(ctx context.Context, model interface{}) (err error) {
 	insertStmt := DatabaseInsert{
 		Table: getTableNameFromModel(s.TablePrefix, model),
 	}
@@ -142,7 +150,15 @@ func (s PostgreSQLConnector) Insert(ctx context.Context, model interface{}) (err
 	return
 }
 
-func (s PostgreSQLConnector) First(ctx context.Context, model interface{}, conditionOrId interface{}) error {
+func (s PostgreSQLConnector) FirstWithContext(ctx context.Context, model interface{}, conditionOrId interface{}) error {
+	return s.first(ctx, model, conditionOrId)
+}
+
+func (s PostgreSQLConnector) First(model interface{}, conditionOrId interface{}) error {
+	return s.first(context.Background(), model, conditionOrId)
+}
+
+func (s PostgreSQLConnector) first(ctx context.Context, model interface{}, conditionOrId interface{}) error {
 	if conditionOrId == nil {
 		return fmt.Errorf("conditionOrId cannot be nil")
 	}
@@ -195,7 +211,16 @@ func (s PostgreSQLConnector) First(ctx context.Context, model interface{}, condi
 	}
 	return nil
 }
-func (s PostgreSQLConnector) All(ctx context.Context, models interface{}, queryProps *DatabaseQuery) error {
+
+func (s PostgreSQLConnector) AllWithContext(ctx context.Context, models interface{}, queryProps *DatabaseQuery) error {
+	return s.all(ctx, models, queryProps)
+}
+
+func (s PostgreSQLConnector) All(models interface{}, queryProps *DatabaseQuery) error {
+	return s.all(context.Background(), models, queryProps)
+}
+
+func (s PostgreSQLConnector) all(ctx context.Context, models interface{}, queryProps *DatabaseQuery) error {
 	// Ensure models is a pointer to a slice
 	val := reflect.ValueOf(models)
 	if val.Kind() != reflect.Ptr || val.Elem().Kind() != reflect.Slice {
@@ -280,7 +305,15 @@ func (s PostgreSQLConnector) Query(ctx context.Context, queryProps *DatabaseQuer
 	return results, nil
 }
 
-func (s PostgreSQLConnector) Delete(ctx context.Context, model interface{}, condition ...Condition) error {
+func (s PostgreSQLConnector) DeleteWithContext(ctx context.Context, model interface{}, condition ...Condition) error {
+	return s.delete(ctx, model, condition...)
+}
+
+func (s PostgreSQLConnector) Delete(model interface{}, condition ...Condition) error {
+	return s.delete(context.Background(), model, condition...)
+}
+
+func (s PostgreSQLConnector) delete(ctx context.Context, model interface{}, condition ...Condition) error {
 	deleteStmt := DatabaseDelete{
 		Table:     getTableNameFromModel(s.TablePrefix, model),
 		Condition: condition,
@@ -334,15 +367,31 @@ func (s PostgreSQLConnector) Delete(ctx context.Context, model interface{}, cond
 	return nil
 }
 
-func (s PostgreSQLConnector) DeleteById(ctx context.Context, model interface{}, id interface{}) error {
-	return s.Delete(ctx, model, Condition{
+func (s PostgreSQLConnector) DeleteByIdWithContext(ctx context.Context, model interface{}, id interface{}) error {
+	return s.deleteById(ctx, model, id)
+}
+
+func (s PostgreSQLConnector) DeleteById(model interface{}, id interface{}) error {
+	return s.deleteById(context.Background(), model, id)
+}
+
+func (s PostgreSQLConnector) deleteById(ctx context.Context, model interface{}, id interface{}) error {
+	return s.DeleteWithContext(ctx, model, Condition{
 		Field:    "id",
 		Operator: "=",
 		Value:    id,
 	})
 }
 
-func (s PostgreSQLConnector) Update(ctx context.Context, model interface{}) (int64, error) {
+func (s PostgreSQLConnector) UpdateWithContext(ctx context.Context, model interface{}) (int64, error) {
+	return s.update(ctx, model)
+}
+
+func (s PostgreSQLConnector) Update(model interface{}) (int64, error) {
+	return s.update(context.Background(), model)
+}
+
+func (s PostgreSQLConnector) update(ctx context.Context, model interface{}) (int64, error) {
 	updateStmt := DatabaseUpdate{
 		Table: getTableNameFromModel(s.TablePrefix, model),
 	}
