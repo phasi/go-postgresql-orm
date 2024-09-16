@@ -29,10 +29,9 @@ func convertGoTypeToPostgresType(goType string, length int) string {
 	// Convert Go type to Postgres type
 	switch goType {
 	case "string":
-		if length > 0 {
+		if length > 0 && length <= 255 {
 			return fmt.Sprintf("VARCHAR(%d)", length)
-		}
-		if length > 255 {
+		} else if length > 255 {
 			// If the length is greater than 255, use TEXT
 			return "TEXT"
 		}
