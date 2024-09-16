@@ -32,6 +32,10 @@ func convertGoTypeToPostgresType(goType string, length int) string {
 		if length > 0 {
 			return fmt.Sprintf("VARCHAR(%d)", length)
 		}
+		if length > 255 {
+			// If the length is greater than 255, use TEXT
+			return "TEXT"
+		}
 		return "VARCHAR(255)"
 	case "int":
 		return "INTEGER"
@@ -86,7 +90,7 @@ func getColumnsAndForeignKeysFromStruct(s interface{}) ([]Column, []ForeignKey) 
 				var err error
 				length, err = strconv.Atoi(columnLength)
 				if err != nil {
-					fmt.Println("error converting column length to int, using max length of 255")
+					fmt.Println("error converting column length to int, length will be 0.")
 				}
 			}
 			columnType := convertGoTypeToPostgresType(field.Type.Name(), length)
