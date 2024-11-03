@@ -60,6 +60,8 @@ func convertGoTypeToPostgresType(goType string, length int) string {
 		return "UUID"
 	case "Time":
 		return "TIMESTAMP"
+	case "time.Duration":
+		return "BIGINT"
 	default:
 		if length > 0 {
 			return fmt.Sprintf("VARCHAR(%d)", length)
