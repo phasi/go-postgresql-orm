@@ -342,6 +342,56 @@ func buildInsertStmt(params *DatabaseInsert, model interface{}) (string, []inter
 	return query, vals, nil
 }
 
+func buildPartialUpdateStmt(params *DatabaseUpdate, model interface{}) (string, []interface{}, error) {
+	var query string
+	query = fmt.Sprintf("UPDATE %s SET ", params.Table)
+	val := reflect.ValueOf(model)
+	if val.Kind() == reflect.Ptr {
+		val = val.Elem()
+	}
+	t := val.Type()
+	args := make([]interface{}, 0)
+	fieldMap := make(map[string]bool)
+	for _, field := range params.Fields {
+		fieldMap[field] = true
+	}
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		dbColumn := field.Tag.Get("db_column")
+		if dbColumn == "id" || dbColumn == "" {
+			continue
+		}
+		if !fieldMap[dbColumn] {
+			continue
+		}
+		query += fmt.Sprintf("%s = $%d, ", dbColumn, len(args)+1)
+		args = append(args, val.Field(i).Interface())
+	}
+	query = strings.TrimSuffix(query, ", ")
+	if len(params.Condition) > 0 {
+		query += " WHERE "
+		for i, condition := range params.Condition {
+			if i > 0 {
+				query += " AND "
+			}
+			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
+				query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
+				args = append(args, "%"+condition.Value.(string)+"%")
+			} else {
+				switch v := condition.Value.(type) {
+				case int, int32, int64, float32, float64:
+					query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
+					args = append(args, v)
+				default:
+					query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
+					args = append(args, condition.Value)
+				}
+			}
+		}
+	}
+	return query, args, nil
+}
+
 func buildUpdateStmt(params *DatabaseUpdate, model interface{}) (string, []interface{}, error) {
 	var query string
 	query = fmt.Sprintf("UPDATE %s SET ", params.Table)

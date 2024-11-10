@@ -496,12 +496,47 @@ func (s PostgreSQLConnector) deleteById(ctx context.Context, model interface{}, 
 	})
 }
 
+func (s PostgreSQLConnector) UpdatePartialWithContext(ctx context.Context, model interface{}, condition []Condition, fields Fields) (int64, error) {
+	return s.updatePartial(ctx, model, condition, fields)
+}
+
+func (s PostgreSQLConnector) UpdatePartial(model interface{}, condition []Condition, fields Fields) (int64, error) {
+	return s.updatePartial(context.Background(), model, condition, fields)
+}
+
 func (s PostgreSQLConnector) UpdateWithContext(ctx context.Context, model interface{}, conditionsOrNil interface{}) (int64, error) {
 	return s.update(ctx, model, conditionsOrNil)
 }
 
 func (s PostgreSQLConnector) Update(model interface{}, conditionsOrNil interface{}) (int64, error) {
 	return s.update(context.Background(), model, conditionsOrNil)
+}
+
+func (s PostgreSQLConnector) updatePartial(ctx context.Context, model interface{}, condition []Condition, fields Fields) (int64, error) {
+	updateStmt := DatabaseUpdate{
+		Table:     getTableNameFromModel(s.TablePrefix, model),
+		Fields:    fields,
+		Condition: condition,
+	}
+	q, args, err := buildPartialUpdateStmt(&updateStmt, model)
+	if err != nil {
+		return 0, err
+	}
+	db := s.GetConnection()
+	fmt.Println(q)
+	// Prepare the query
+	stmt, err := db.PrepareContext(ctx, q)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+
+	// Execute the query
+	result, err := stmt.Exec(args...)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func (s PostgreSQLConnector) update(ctx context.Context, model interface{}, conditionsOrNil interface{}) (int64, error) {
