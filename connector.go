@@ -523,7 +523,6 @@ func (s PostgreSQLConnector) updatePartial(ctx context.Context, model interface{
 		return 0, err
 	}
 	db := s.GetConnection()
-	fmt.Println(q)
 	// Prepare the query
 	stmt, err := db.PrepareContext(ctx, q)
 	if err != nil {
@@ -676,9 +675,17 @@ func (s *PostgreSQLConnector) InsertWithTransaction(tx *sql.Tx, model interface{
 	return err
 }
 
-func (s *PostgreSQLConnector) UpdateWithTransactionAndContext(ctx context.Context, tx *sql.Tx, model interface{}) (int64, error) {
+func (s *PostgreSQLConnector) UpdateWithTransactionAndContext(ctx context.Context, tx *sql.Tx, model interface{}, conditionsOrNil interface{}) (int64, error) {
 	updateStmt := DatabaseUpdate{
 		Table: getTableNameFromModel(s.TablePrefix, model),
+	}
+	if conditionsOrNil != nil {
+		switch v := conditionsOrNil.(type) {
+		case []Condition:
+			updateStmt.Condition = append(updateStmt.Condition, v...)
+		default:
+			return 0, fmt.Errorf("conditionsOrNil must be a slice of Condition")
+		}
 	}
 	parseTags(model, &updateStmt.Fields)
 	val := reflect.ValueOf(model)
@@ -688,14 +695,14 @@ func (s *PostgreSQLConnector) UpdateWithTransactionAndContext(ctx context.Contex
 	t := val.Type()
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		if field.Tag.Get("db_column") == "id" {
-			updateStmt.Condition = []Condition{
+		if field.Tag.Get("db_column") == "id" && len(updateStmt.Condition) == 0 {
+			updateStmt.Condition = append(updateStmt.Condition, []Condition{
 				{
 					Field:    "id",
 					Operator: "=",
 					Value:    val.Field(i).Interface(),
 				},
-			}
+			}...)
 			break
 		}
 	}
