@@ -46,7 +46,8 @@ type Column struct {
 	// primaryKey is a boolean that indicates whether the column is a primary key
 	PrimaryKey bool
 	// allow null
-	Null   bool
+	Null bool
+	// unique value
 	Unique bool
 	// Length is the length of the column, for example 255, only used for VARCHAR columns (string)
 	Length int
@@ -89,4 +90,13 @@ func (f Fields) String() []string {
 		fields = append(fields, field)
 	}
 	return fields
+}
+
+type JoinProps struct {
+	MainTableModel interface{}
+	JoinTableModel interface{}
+	MainTableCols  []string
+	JoinTableCols  []string
+	JoinCondition  string
+	WhereCondition []Condition
 }

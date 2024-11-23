@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"reflect"
+	"strings"
 
 	_ "github.com/lib/pq"
 )
@@ -148,6 +149,53 @@ func (s PostgreSQLConnector) insert(ctx context.Context, model interface{}) (err
 	// Execute the query
 	_, err = stmt.ExecContext(ctx, args...)
 	return
+}
+
+func (s PostgreSQLConnector) CustomMutate(ctx context.Context, transactionOrNil *sql.Tx, query string, args ...interface{}) (result *sql.Result, err error) {
+	var stmt *sql.Stmt
+	if transactionOrNil != nil {
+		stmt, err := transactionOrNil.PrepareContext(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		defer stmt.Close()
+	} else {
+		db := s.GetConnection()
+		// Prepare the query
+		stmt, err := db.PrepareContext(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		defer stmt.Close()
+	}
+	// Execute the query
+	res, err := stmt.ExecContext(ctx, args...)
+	return &res, err
+}
+
+func (s PostgreSQLConnector) CustomQuery(ctx context.Context, transactionOrNil *sql.Tx, query string, args ...interface{}) (rows *sql.Rows, err error) {
+	var stmt *sql.Stmt
+	if transactionOrNil != nil {
+		stmt, err := transactionOrNil.PrepareContext(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		defer stmt.Close()
+	} else {
+		db := s.GetConnection()
+		// Prepare the query
+		stmt, err := db.PrepareContext(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		defer stmt.Close()
+	}
+	// Perform a query
+	rows, err = stmt.QueryContext(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 func (s PostgreSQLConnector) FirstWithContext(ctx context.Context, model interface{}, conditionOrId interface{}) error {
@@ -496,12 +544,16 @@ func (s PostgreSQLConnector) deleteById(ctx context.Context, model interface{}, 
 	})
 }
 
+func (s PostgreSQLConnector) UpdatePartialWithTransactionAndContext(ctx context.Context, model interface{}, condition []Condition, fields Fields, tx *sql.Tx) (int64, error) {
+	return s.updatePartial(ctx, model, condition, fields, nil)
+}
+
 func (s PostgreSQLConnector) UpdatePartialWithContext(ctx context.Context, model interface{}, condition []Condition, fields Fields) (int64, error) {
-	return s.updatePartial(ctx, model, condition, fields)
+	return s.updatePartial(ctx, model, condition, fields, nil)
 }
 
 func (s PostgreSQLConnector) UpdatePartial(model interface{}, condition []Condition, fields Fields) (int64, error) {
-	return s.updatePartial(context.Background(), model, condition, fields)
+	return s.updatePartial(context.Background(), model, condition, fields, nil)
 }
 
 func (s PostgreSQLConnector) UpdateWithContext(ctx context.Context, model interface{}, conditionsOrNil interface{}) (int64, error) {
@@ -512,7 +564,7 @@ func (s PostgreSQLConnector) Update(model interface{}, conditionsOrNil interface
 	return s.update(context.Background(), model, conditionsOrNil)
 }
 
-func (s PostgreSQLConnector) updatePartial(ctx context.Context, model interface{}, condition []Condition, fields Fields) (int64, error) {
+func (s PostgreSQLConnector) updatePartial(ctx context.Context, model interface{}, condition []Condition, fields Fields, tx *sql.Tx) (int64, error) {
 	updateStmt := DatabaseUpdate{
 		Table:     getTableNameFromModel(s.TablePrefix, model),
 		Fields:    fields,
@@ -524,7 +576,12 @@ func (s PostgreSQLConnector) updatePartial(ctx context.Context, model interface{
 	}
 	db := s.GetConnection()
 	// Prepare the query
-	stmt, err := db.PrepareContext(ctx, q)
+	var stmt *sql.Stmt
+	if tx != nil {
+		stmt, err = tx.PrepareContext(ctx, q)
+	} else {
+		stmt, err = db.PrepareContext(ctx, q)
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -853,4 +910,90 @@ func (s *PostgreSQLConnector) DeleteWithTransaction(tx *sql.Tx, model interface{
 		return err
 	}
 	return nil
+}
+
+func prefixColumns(tableName string, columns []string) []string {
+	prefixedCols := make([]string, len(columns))
+	for i, col := range columns {
+		prefixedCols[i] = fmt.Sprintf("%s.%s", tableName, col)
+	}
+	return prefixedCols
+}
+
+func (s *PostgreSQLConnector) JoinWithContext(ctx context.Context, props *JoinProps) ([]map[string]interface{}, error) {
+	return s.join(ctx, props)
+}
+
+func (s *PostgreSQLConnector) join(ctx context.Context, props *JoinProps) ([]map[string]interface{}, error) {
+	mainTableName := getTableNameFromModel(s.TablePrefix, props.MainTableModel)
+	joinTableName := getTableNameFromModel(s.TablePrefix, props.JoinTableModel)
+
+	// Prefix columns with table names
+	mainTableCols := prefixColumns(mainTableName, props.MainTableCols)
+	joinTableCols := prefixColumns(joinTableName, props.JoinTableCols)
+
+	// Build the SQL query
+	query := fmt.Sprintf("SELECT %s, %s FROM %s JOIN %s ON %s",
+		strings.Join(mainTableCols, ", "),
+		strings.Join(joinTableCols, ", "),
+		mainTableName,
+		joinTableName,
+		props.JoinCondition,
+	)
+
+	var args []interface{}
+	if len(props.WhereCondition) > 0 {
+		query += " WHERE "
+		for i, condition := range props.WhereCondition {
+			if i > 0 {
+				query += " AND "
+			}
+			query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, i+1)
+			args = append(args, condition.Value)
+		}
+	}
+
+	db := s.GetConnection()
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("error executing join query: %v", err)
+	}
+	defer rows.Close()
+
+	// Get column names
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("error getting columns: %v", err)
+	}
+
+	// Prepare a slice to hold the results
+	var results []map[string]interface{}
+
+	// Iterate over the rows
+	for rows.Next() {
+		// Create a map to hold the row data
+		rowData := make(map[string]interface{})
+		// Create a slice to hold the values
+		values := make([]interface{}, len(columns))
+		// Create a slice to hold the pointers to the values
+		valuePtrs := make([]interface{}, len(columns))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		// Scan the row into the value pointers
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return nil, fmt.Errorf("error scanning row: %v", err)
+		}
+
+		// Populate the rowData map
+		for i, col := range columns {
+			rowData[col] = values[i]
+		}
+
+		// Append the rowData map to the results slice
+		results = append(results, rowData)
+	}
+
+	return results, nil
 }
