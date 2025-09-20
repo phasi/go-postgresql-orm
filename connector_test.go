@@ -10,20 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-var connector PostgreSQLConnector = PostgreSQLConnector{
-	Host:        "localhost",
-	Port:        "5432",
-	User:        "test_orm",
-	Password:    "test_orm",
-	Database:    "test_orm",
-	SSLMode:     "disable", // options: verify-full, verify-ca, disable
-	TablePrefix: "orm_",
-}
-
-var modelId = uuid.New()
-var relatedModelId = uuid.New()
-
-func getFakeHttpRequestWithContext() *http.Request {
+func fakeHttpRequest() *http.Request {
 	req := &http.Request{
 		Header: map[string][]string{
 			"Content-Type": {"application/json"},
@@ -40,8 +27,8 @@ func getFakeHttpRequestWithContext() *http.Request {
 	return req.WithContext(newContext)
 }
 
-func getFakeRequestWithQuery(direction string, limit string, offset string, search string) *http.Request {
-	r := getFakeHttpRequestWithContext()
+func fakeHttpRequestWithQueryParams(direction string, limit string, offset string, search string) *http.Request {
+	r := fakeHttpRequest()
 	// Original URL
 	originalURL := r.URL.String()
 
@@ -68,21 +55,43 @@ func getFakeRequestWithQuery(direction string, limit string, offset string, sear
 	return r
 }
 
-type TestModel struct {
-	ID          uuid.UUID `db_column:"id"`
-	StringValue string    `db_column:"string_value" db_column_length:"10"`
-	IntValue    int       `db_column:"int_value"`
-	UniqueValue string    `db_column:"unique_value" db_unique:"yes"`
+var testUserId = uuid.New()
+var testCompanyId = uuid.New()
+var testPermissionId = uuid.New()
+
+type TestUser struct {
+	ID       uuid.UUID `db_column:"id"`
+	Email    string    `db_column:"email" db_unique:"yes"`
+	Name     string    `db_column:"name" db_column_length:"30"`
+	UserType int       `db_column:"user_type"`
 }
-type TestRelatedModel struct {
+
+type TestUserCompanyPermission struct {
+	ID        uuid.UUID `db_column:"id"`
+	UserID    uuid.UUID `db_column:"user_id" db_fk:"orm_testuser(id)" db_fk_on_delete:"cascade"`
+	CompanyID uuid.UUID `db_column:"company_id" db_fk:"orm_testcompany(id)" db_fk_on_delete:"cascade"`
+	Role      string    `db_column:"role"`
+}
+
+type TestCompany struct {
 	ID          uuid.UUID `db_column:"id"`
-	TestModelID uuid.UUID `db_column:"test_model_id" db_fk:"orm_testmodel(id)" db_nullable:"" db_fk_on_delete:"set null"`
-	StringValue string    `db:"string_value"`
+	CompanyName string    `db_column:"company_name"`
 }
 
 var TABLES = []interface{}{
-	&TestModel{},
-	&TestRelatedModel{},
+	&TestUser{},
+	&TestCompany{},
+	&TestUserCompanyPermission{},
+}
+
+var connector PostgreSQLConnector = PostgreSQLConnector{
+	Host:        "localhost",
+	Port:        "5432",
+	User:        "test_orm",
+	Password:    "test_orm",
+	Database:    "test_orm",
+	SSLMode:     "disable", // options: verify-full, verify-ca, disable
+	TablePrefix: "orm_",
 }
 
 func TestConnectDatabase(t *testing.T) {
@@ -106,59 +115,80 @@ func TestCreateTables(t *testing.T) {
 	}
 }
 
-func TestInsertModel(t *testing.T) {
-	r := getFakeHttpRequestWithContext()
-	err := connector.InsertWithContext(r.Context(), &TestModel{
-		ID:          modelId,
-		StringValue: "test",
-		IntValue:    10,
-		UniqueValue: "thisisunique",
+func TestInsertUser(t *testing.T) {
+	r := fakeHttpRequest()
+	err := connector.InsertWithContext(r.Context(), &TestUser{
+		ID:       testUserId,
+		Email:    "test@example.com",
+		Name:     "Test User",
+		UserType: 1,
 	})
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
 }
 
-func TestSelectModel(t *testing.T) {
-	r := getFakeHttpRequestWithContext()
-	m := &TestModel{}
-	err := connector.FirstWithContext(r.Context(), m, modelId)
+func TestSelectUser(t *testing.T) {
+	r := fakeHttpRequest()
+	m := &TestUser{}
+	err := connector.FirstWithContext(r.Context(), m, testUserId)
 	t.Logf("Original model: %v", m)
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
 }
 
-func TestInsertRelatedModel(t *testing.T) {
-	r := getFakeHttpRequestWithContext()
-	err := connector.InsertWithContext(r.Context(), &TestRelatedModel{
-		ID:          relatedModelId,
-		TestModelID: modelId,
-		StringValue: "test related",
+func TestInsertCompany(t *testing.T) {
+	r := fakeHttpRequest()
+	err := connector.InsertWithContext(r.Context(), &TestCompany{
+		ID:          testCompanyId,
+		CompanyName: "Test Company",
 	})
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
 }
 
-func TestSelectRelatedModel(t *testing.T) {
-	r := getFakeHttpRequestWithContext()
-	m := &TestRelatedModel{}
-	err := connector.FirstWithContext(r.Context(), m, relatedModelId)
-	t.Logf("Related model: %v", m)
+func TestSelectCompany(t *testing.T) {
+	r := fakeHttpRequest()
+	m := &TestCompany{}
+	err := connector.FirstWithContext(r.Context(), m, testCompanyId)
+	t.Logf("Original model: %v", m)
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
 }
 
-func TestUpdateModel(t *testing.T) {
-	r := getFakeHttpRequestWithContext()
-	affected, err := connector.UpdateWithContext(r.Context(), &TestModel{
-		ID:          modelId,
-		StringValue: "updated",
-		IntValue:    200,
-		UniqueValue: "thisisunique",
+func TestInsertUserCompanyPermission(t *testing.T) {
+	r := fakeHttpRequest()
+	err := connector.InsertWithContext(r.Context(), &TestUserCompanyPermission{
+		ID:        testPermissionId,
+		UserID:    testUserId,
+		CompanyID: testCompanyId,
+		Role:      "admin",
 	})
+	if err != nil {
+		t.Errorf("error should be nil, but was: %s", err)
+	}
+}
+
+func TestSelectUserCompanyPermission(t *testing.T) {
+	r := fakeHttpRequest()
+	m := &TestUserCompanyPermission{}
+	err := connector.FirstWithContext(r.Context(), m, testPermissionId)
+	t.Logf("Original model: %v", m)
+	if err != nil {
+		t.Errorf("error should be nil, but was: %s", err)
+	}
+}
+
+func TestUpdateUser(t *testing.T) {
+	r := fakeHttpRequest()
+	affected, err := connector.UpdateWithContext(r.Context(), &TestUser{
+		ID:    testUserId,
+		Email: "updated@example.com",
+		Name:  "Updated User",
+	}, nil)
 	if affected == 0 {
 		t.Error("update should have succeeded but nothing was changed")
 	}
@@ -167,24 +197,14 @@ func TestUpdateModel(t *testing.T) {
 	}
 }
 
-func TestSelectUpdatedModel(t *testing.T) {
-	r := getFakeHttpRequestWithContext()
-	m := &TestModel{}
-	err := connector.FirstWithContext(r.Context(), m, modelId)
-	t.Logf("Updated model: %v", m)
-	if err != nil {
-		t.Errorf("error should be nil, but was: %s", err)
-	}
-}
-
-func TestInsertMoreModels(t *testing.T) {
-	r := getFakeHttpRequestWithContext()
+func TestInsertMoreUsers(t *testing.T) {
+	r := fakeHttpRequest()
 	for i := 0; i < 15; i++ {
-		model := TestModel{
-			ID:          uuid.New(),
-			StringValue: fmt.Sprintf("test %d", i),
-			IntValue:    i,
-			UniqueValue: fmt.Sprintf("thisisunique%d", i),
+		model := TestUser{
+			ID:       uuid.New(),
+			Email:    fmt.Sprintf("test%d@example.com", i),
+			Name:     fmt.Sprintf("Test User %d", i),
+			UserType: 1,
 		}
 		err := connector.InsertWithContext(r.Context(), &model)
 		if err != nil {
@@ -193,11 +213,11 @@ func TestInsertMoreModels(t *testing.T) {
 	}
 }
 
-func TestSelectAllModels(t *testing.T) {
-	r := getFakeHttpRequestWithContext()
-	models := []TestModel{}
+func TestSelectAllUsers(t *testing.T) {
+	r := fakeHttpRequest()
+	models := []TestUser{}
 	err := connector.AllWithContext(r.Context(), &models, &DatabaseQuery{
-		Model: &TestModel{},
+		Model: &TestUser{},
 	})
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
@@ -208,12 +228,12 @@ func TestSelectAllModels(t *testing.T) {
 	}
 }
 
-func TestSelectAllModelsInDescendingOrder(t *testing.T) {
-	r := getFakeHttpRequestWithContext()
-	models := []TestModel{}
+func TestSelectAllUsersInDescendingOrder(t *testing.T) {
+	r := fakeHttpRequest()
+	models := []TestUser{}
 	err := connector.AllWithContext(r.Context(), &models, &DatabaseQuery{
-		Model:      &TestModel{},
-		OrderBy:    "int_value",
+		Model:      &TestUser{},
+		OrderBy:    "email",
 		Descending: true,
 	})
 	if err != nil {
@@ -225,21 +245,21 @@ func TestSelectAllModelsInDescendingOrder(t *testing.T) {
 	}
 }
 
-func TestSelectAllModelsWithinConditionRange(t *testing.T) {
-	r := getFakeHttpRequestWithContext()
-	models := []TestModel{}
+func TestSelectUsersWithCondition(t *testing.T) {
+	r := fakeHttpRequest()
+	models := []TestUser{}
 	err := connector.AllWithContext(r.Context(), &models, &DatabaseQuery{
-		Model: &TestModel{},
+		Model: &TestUser{},
 		Condition: []Condition{
 			{
-				Field:    "int_value",
+				Field:    "user_type",
 				Operator: ">=",
-				Value:    5,
+				Value:    1,
 			},
 			{
-				Field:    "int_value",
+				Field:    "user_type",
 				Operator: "<=",
-				Value:    10,
+				Value:    2,
 			},
 		},
 	})
@@ -252,11 +272,11 @@ func TestSelectAllModelsWithinConditionRange(t *testing.T) {
 	}
 }
 
-func TestSelectLimitedModels(t *testing.T) {
-	r := getFakeHttpRequestWithContext()
-	models := []TestModel{}
+func TestSelectLimitedUsers(t *testing.T) {
+	r := fakeHttpRequest()
+	models := []TestUser{}
 	err := connector.AllWithContext(r.Context(), &models, &DatabaseQuery{
-		Model: &TestModel{},
+		Model: &TestUser{},
 		Limit: 5,
 	})
 	if err != nil {
@@ -268,21 +288,16 @@ func TestSelectLimitedModels(t *testing.T) {
 	}
 }
 
-func TestSelectLimitedModelsWithCondition(t *testing.T) {
-	r := getFakeHttpRequestWithContext()
-	models := []TestModel{}
+func TestSelectLimitedUsersWithCondition(t *testing.T) {
+	r := fakeHttpRequest()
+	models := []TestUser{}
 	err := connector.AllWithContext(r.Context(), &models, &DatabaseQuery{
-		Model: &TestModel{},
+		Model: &TestUser{},
 		Condition: []Condition{
 			{
-				Field:    "int_value",
-				Operator: ">=",
-				Value:    5,
-			},
-			{
-				Field:    "int_value",
-				Operator: "<=",
-				Value:    10,
+				Field:    "user_type",
+				Operator: "=",
+				Value:    1,
 			},
 		},
 		Limit: 2,
@@ -297,10 +312,10 @@ func TestSelectLimitedModelsWithCondition(t *testing.T) {
 }
 
 func TestSelectPageOne(t *testing.T) {
-	r := getFakeRequestWithQuery("", "5", "", "")
-	models := []TestModel{}
+	r := fakeHttpRequestWithQueryParams("", "5", "", "")
+	models := []TestUser{}
 	query := &DatabaseQuery{
-		Model:           &TestModel{},
+		Model:           &TestUser{},
 		AllowPagination: true,
 	}
 	ParseQueryParamsFromRequest(r, query)
@@ -315,10 +330,10 @@ func TestSelectPageOne(t *testing.T) {
 }
 
 func TestSelectPageTwo(t *testing.T) {
-	r := getFakeRequestWithQuery("", "5", "5", "")
-	models := []TestModel{}
+	r := fakeHttpRequestWithQueryParams("", "5", "5", "")
+	models := []TestUser{}
 	query := &DatabaseQuery{
-		Model:           &TestModel{},
+		Model:           &TestUser{},
 		AllowPagination: true,
 	}
 	ParseQueryParamsFromRequest(r, query)
@@ -332,13 +347,13 @@ func TestSelectPageTwo(t *testing.T) {
 	}
 }
 
-func TestSelectUsingSearch(t *testing.T) {
-	r := getFakeRequestWithQuery("", "", "", "test 2")
-	models := []TestModel{}
+func TestSelectUsersWithSearch(t *testing.T) {
+	r := fakeHttpRequestWithQueryParams("", "", "", "test5")
+	models := []TestUser{}
 	query := &DatabaseQuery{
-		Model:        &TestModel{},
+		Model:        &TestUser{},
 		AllowSearch:  true,
-		SearchFields: []string{"string_value"},
+		SearchFields: []string{"email"},
 	}
 	ParseQueryParamsFromRequest(r, query)
 	fmt.Println(query)
@@ -353,18 +368,24 @@ func TestSelectUsingSearch(t *testing.T) {
 }
 
 func TestDeleteOne(t *testing.T) {
-	r := getFakeHttpRequestWithContext()
-	err := connector.DeleteByIdWithContext(r.Context(), &TestModel{}, modelId)
+	r := fakeHttpRequest()
+	affected, err := connector.DeleteByIdWithContext(r.Context(), &TestUser{}, testUserId)
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
+	}
+	if affected == 0 {
+		t.Error("delete should have succeeded but nothing was changed")
 	}
 }
 
 func TestDeleteAllWithContext(t *testing.T) {
-	r := getFakeHttpRequestWithContext()
-	err := connector.DeleteWithContext(r.Context(), &TestModel{})
+	r := fakeHttpRequest()
+	affected, err := connector.DeleteWithContext(r.Context(), &TestUser{})
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
+	}
+	if affected == 0 {
+		t.Error("delete should have succeeded but nothing was changed")
 	}
 }
 
