@@ -1,5 +1,36 @@
 package db
 
+import (
+	"context"
+	"database/sql"
+)
+
+const (
+	DefaultIDField     = "id"
+	DBColumnTag        = "db_column"
+	DefaultLimit       = 100
+	DefaultTablePrefix = "gpo_"
+)
+
+// Option represents a configuration option for database operations
+type Option func(*Config)
+
+// Config holds configuration for database operations
+type Config struct {
+	ctx context.Context
+	tx  *sql.Tx
+}
+
+// WithContext sets the context for database operations
+func WithContext(ctx context.Context) Option {
+	return func(c *Config) { c.ctx = ctx }
+}
+
+// WithTransaction sets the transaction for database operations
+func WithTransaction(tx *sql.Tx) Option {
+	return func(c *Config) { c.tx = tx }
+}
+
 type Condition struct {
 	Field    string
 	Operator string
@@ -9,10 +40,8 @@ type Condition struct {
 type DatabaseQuery struct {
 	Table string
 	// Fields is a slice of strings that represent the fields to be selected
-	fields Fields
-	// pass a struct as Model with "db_column" tags in properties
-	Model           interface{}
-	Condition       []Condition
+	fields          Fields
+	Conditions      []Condition
 	OrderBy         string
 	Limit           int
 	Offset          int
@@ -24,15 +53,14 @@ type DatabaseQuery struct {
 }
 
 type DatabaseDelete struct {
-	Table     string `json:"table"`
-	Model     interface{}
-	Condition []Condition
+	Table      string `json:"table"`
+	Conditions []Condition
 }
 
 type DatabaseUpdate struct {
-	Table     string `json:"table"`
-	Fields    Fields `json:"fields"`
-	Condition []Condition
+	Table      string `json:"table"`
+	Fields     Fields `json:"fields"`
+	Conditions []Condition
 }
 
 type FieldMap map[string]string
@@ -93,10 +121,10 @@ func (f Fields) String() []string {
 }
 
 type JoinProps struct {
-	MainTableModel interface{}
-	JoinTableModel interface{}
-	MainTableCols  []string
-	JoinTableCols  []string
-	JoinCondition  string
-	WhereCondition []Condition
+	MainTableModel  interface{}
+	JoinTableModel  interface{}
+	MainTableCols   []string
+	JoinTableCols   []string
+	JoinCondition   string
+	WhereConditions []Condition
 }
