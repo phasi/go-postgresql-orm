@@ -378,20 +378,22 @@ return tx.Commit()
 
 ### QueryBuilder Utility
 
-Build complex queries programmatically:
+Build WHERE clauses and query conditions programmatically:
 
 ```go
 builder := NewQueryBuilder().
-    Select("*").
-    From("users").
     Where("age", ">", 18).
     Where("status", "=", "active").
     OrderBy("name", true). // true for DESC
-    Limit(10).
-    Offset(20)
+    Limit(10)
 
-query, args := builder.Build()
-// Produces: SELECT * FROM users WHERE age > $1 AND status = $2 ORDER BY name DESC LIMIT 10 OFFSET 20
+whereClause, args := builder.Build()
+// Produces: " WHERE age > $1 AND status = $2 ORDER BY name DESC LIMIT 10"
+// args: [18, "active"]
+
+// Use with custom queries
+fullQuery := "SELECT * FROM users" + whereClause
+rows, err := connector.CustomQuery(ctx, nil, fullQuery, args...)
 ```
 
 ## Constants
