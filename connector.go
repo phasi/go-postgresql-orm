@@ -10,7 +10,16 @@ import (
 	_ "github.com/lib/pq"
 )
 
-const defaultTablePrefix = "gpo_"
+const defaultTablePrefix = DefaultTablePrefix
+
+// Helper function to process options
+func processOptions(opts []Option) *Config {
+	config := &Config{ctx: context.Background()}
+	for _, opt := range opts {
+		opt(config)
+	}
+	return config
+}
 
 type PostgreSQLConnector struct {
 	Host        string  `json:"host"`
@@ -122,15 +131,11 @@ func (s *PostgreSQLConnector) DropTables(modelsOrTableNames ...interface{}) erro
 	return nil
 }
 
-func (s PostgreSQLConnector) InsertWithContext(ctx context.Context, model interface{}) (err error) {
-	return s.insert(ctx, model)
-}
-
-func (s PostgreSQLConnector) Insert(model interface{}) (err error) {
-	return s.insert(context.Background(), model)
-}
-
 func (s PostgreSQLConnector) insert(ctx context.Context, model interface{}) (err error) {
+	return s.insertWithTx(ctx, nil, model)
+}
+
+func (s PostgreSQLConnector) insertWithTx(ctx context.Context, tx *sql.Tx, model interface{}) (err error) {
 	insertStmt := DatabaseInsert{
 		Table: getTableNameFromModel(s.TablePrefix, model),
 	}
@@ -139,9 +144,15 @@ func (s PostgreSQLConnector) insert(ctx context.Context, model interface{}) (err
 	if err != nil {
 		return
 	}
-	db := s.GetConnection()
+
 	// Prepare the query
-	stmt, err := db.PrepareContext(ctx, q)
+	var stmt *sql.Stmt
+	if tx != nil {
+		stmt, err = tx.PrepareContext(ctx, q)
+	} else {
+		db := s.GetConnection()
+		stmt, err = db.PrepareContext(ctx, q)
+	}
 	if err != nil {
 		return
 	}
@@ -198,14 +209,6 @@ func (s PostgreSQLConnector) CustomQuery(ctx context.Context, transactionOrNil *
 	return rows, nil
 }
 
-func (s PostgreSQLConnector) FirstWithContext(ctx context.Context, model interface{}, conditionOrId interface{}) error {
-	return s.first(ctx, model, conditionOrId)
-}
-
-func (s PostgreSQLConnector) First(model interface{}, conditionOrId interface{}) error {
-	return s.first(context.Background(), model, conditionOrId)
-}
-
 func (s PostgreSQLConnector) first(ctx context.Context, model interface{}, conditionOrId interface{}) error {
 	if conditionOrId == nil {
 		return fmt.Errorf("conditionOrId cannot be nil")
@@ -217,7 +220,7 @@ func (s PostgreSQLConnector) first(ctx context.Context, model interface{}, condi
 	default:
 		condition = []Condition{
 			{
-				Field:    "id",
+				Field:    DefaultIDField,
 				Operator: "=",
 				Value:    v,
 			},
@@ -259,14 +262,6 @@ func (s PostgreSQLConnector) first(ctx context.Context, model interface{}, condi
 	return nil
 }
 
-func (s PostgreSQLConnector) FirstWithTransactionAndContext(ctx context.Context, tx *sql.Tx, model interface{}, conditionOrId interface{}) error {
-	return s.firstWithTransaction(ctx, tx, model, conditionOrId)
-}
-
-func (s PostgreSQLConnector) FirstWithTransaction(tx *sql.Tx, model interface{}, conditionOrId interface{}) error {
-	return s.firstWithTransaction(context.Background(), tx, model, conditionOrId)
-}
-
 func (s PostgreSQLConnector) firstWithTransaction(ctx context.Context, tx *sql.Tx, model interface{}, conditionOrId interface{}) error {
 	if conditionOrId == nil {
 		return fmt.Errorf("conditionOrId cannot be nil")
@@ -278,7 +273,7 @@ func (s PostgreSQLConnector) firstWithTransaction(ctx context.Context, tx *sql.T
 	default:
 		condition = []Condition{
 			{
-				Field:    "id",
+				Field:    DefaultIDField,
 				Operator: "=",
 				Value:    v,
 			},
@@ -318,22 +313,6 @@ func (s PostgreSQLConnector) firstWithTransaction(ctx context.Context, tx *sql.T
 		}
 	}
 	return nil
-}
-
-func (s PostgreSQLConnector) AllWithTransactionAndContext(ctx context.Context, tx *sql.Tx, models interface{}, queryProps *DatabaseQuery) error {
-	return s.allWithTransaction(ctx, tx, models, queryProps)
-}
-
-func (s PostgreSQLConnector) AllWithTransaction(tx *sql.Tx, models interface{}, queryProps *DatabaseQuery) error {
-	return s.allWithTransaction(context.Background(), tx, models, queryProps)
-}
-
-func (s PostgreSQLConnector) AllWithContext(ctx context.Context, models interface{}, queryProps *DatabaseQuery) error {
-	return s.all(ctx, models, queryProps)
-}
-
-func (s PostgreSQLConnector) All(models interface{}, queryProps *DatabaseQuery) error {
-	return s.all(context.Background(), models, queryProps)
 }
 
 func (s PostgreSQLConnector) all(ctx context.Context, models interface{}, queryProps *DatabaseQuery) error {
@@ -485,48 +464,50 @@ func (s PostgreSQLConnector) Query(ctx context.Context, model interface{}, query
 	return results, nil
 }
 
-func (s PostgreSQLConnector) DeleteWithContext(ctx context.Context, model interface{}, condition ...Condition) (int64, error) {
-	return s.delete(ctx, model, condition...)
-}
-
-func (s PostgreSQLConnector) Delete(model interface{}, condition ...Condition) (int64, error) {
-	return s.delete(context.Background(), model, condition...)
-}
-
 func (s PostgreSQLConnector) delete(ctx context.Context, model interface{}, condition ...Condition) (int64, error) {
+	return s.deleteWithTx(ctx, nil, model, condition...)
+}
+
+func (s PostgreSQLConnector) deleteWithTx(ctx context.Context, tx *sql.Tx, model interface{}, condition ...Condition) (int64, error) {
 	deleteStmt := DatabaseDelete{
 		Table:      getTableNameFromModel(s.TablePrefix, model),
 		Conditions: condition,
 	}
 
-	db := s.GetConnection()
-
 	// Start the delete statement
-	sql := fmt.Sprintf("DELETE FROM %s", deleteStmt.Table)
+	query := fmt.Sprintf("DELETE FROM %s", deleteStmt.Table)
 
 	// Add the conditions
 	var args []interface{}
 	if len(deleteStmt.Conditions) > 0 {
-		sql += " WHERE "
+		query += " WHERE "
 		for i, condition := range deleteStmt.Conditions {
 			if i > 0 {
-				sql += " AND "
+				query += " AND "
 			}
 			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
-				sql += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, i+1)
+				query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, i+1)
 			} else {
 				switch condition.Value.(type) {
 				case int, int32, int64, float32, float64:
-					sql += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, i+1)
+					query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, i+1)
 				default:
-					sql += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, i+1)
+					query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, i+1)
 				}
 			}
 			args = append(args, condition.Value)
 		}
 	}
+
 	// Prepare the statement
-	stmt, err := db.PrepareContext(ctx, sql)
+	var stmt *sql.Stmt
+	var err error
+	if tx != nil {
+		stmt, err = tx.PrepareContext(ctx, query)
+	} else {
+		db := s.GetConnection()
+		stmt, err = db.PrepareContext(ctx, query)
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -544,74 +525,11 @@ func (s PostgreSQLConnector) delete(ctx context.Context, model interface{}, cond
 	return affectedRows, nil
 }
 
-func (s PostgreSQLConnector) DeleteByIdWithContext(ctx context.Context, model interface{}, id interface{}) (int64, error) {
-	return s.deleteById(ctx, model, id)
-}
-
-func (s PostgreSQLConnector) DeleteById(model interface{}, id interface{}) (int64, error) {
-	return s.deleteById(context.Background(), model, id)
-}
-
-func (s PostgreSQLConnector) deleteById(ctx context.Context, model interface{}, id interface{}) (int64, error) {
-	return s.DeleteWithContext(ctx, model, Condition{
-		Field:    "id",
-		Operator: "=",
-		Value:    id,
-	})
-}
-
-func (s PostgreSQLConnector) UpdatePartialWithTransactionAndContext(ctx context.Context, model interface{}, condition []Condition, fields Fields, tx *sql.Tx) (int64, error) {
-	return s.updatePartial(ctx, model, condition, fields, nil)
-}
-
-func (s PostgreSQLConnector) UpdatePartialWithContext(ctx context.Context, model interface{}, condition []Condition, fields Fields) (int64, error) {
-	return s.updatePartial(ctx, model, condition, fields, nil)
-}
-
-func (s PostgreSQLConnector) UpdatePartial(model interface{}, condition []Condition, fields Fields) (int64, error) {
-	return s.updatePartial(context.Background(), model, condition, fields, nil)
-}
-
-func (s PostgreSQLConnector) UpdateWithContext(ctx context.Context, model interface{}, conditionsOrNil interface{}) (int64, error) {
-	return s.update(ctx, model, conditionsOrNil)
-}
-
-func (s PostgreSQLConnector) Update(model interface{}, conditionsOrNil interface{}) (int64, error) {
-	return s.update(context.Background(), model, conditionsOrNil)
-}
-
-func (s PostgreSQLConnector) updatePartial(ctx context.Context, model interface{}, condition []Condition, fields Fields, tx *sql.Tx) (int64, error) {
-	updateStmt := DatabaseUpdate{
-		Table:      getTableNameFromModel(s.TablePrefix, model),
-		Fields:     fields,
-		Conditions: condition,
-	}
-	q, args, err := buildPartialUpdateStmt(&updateStmt, model)
-	if err != nil {
-		return 0, err
-	}
-	db := s.GetConnection()
-	// Prepare the query
-	var stmt *sql.Stmt
-	if tx != nil {
-		stmt, err = tx.PrepareContext(ctx, q)
-	} else {
-		stmt, err = db.PrepareContext(ctx, q)
-	}
-	if err != nil {
-		return 0, err
-	}
-	defer stmt.Close()
-
-	// Execute the query
-	result, err := stmt.Exec(args...)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
 func (s PostgreSQLConnector) update(ctx context.Context, model interface{}, conditionsOrNil interface{}) (int64, error) {
+	return s.updateWithTx(ctx, nil, model, conditionsOrNil)
+}
+
+func (s PostgreSQLConnector) updateWithTx(ctx context.Context, tx *sql.Tx, model interface{}, conditionsOrNil interface{}) (int64, error) {
 	updateStmt := DatabaseUpdate{
 		Table: getTableNameFromModel(s.TablePrefix, model),
 	}
@@ -631,10 +549,10 @@ func (s PostgreSQLConnector) update(ctx context.Context, model interface{}, cond
 	t := val.Type()
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		if field.Tag.Get("db_column") == "id" && len(updateStmt.Conditions) == 0 {
+		if field.Tag.Get(DBColumnTag) == DefaultIDField && len(updateStmt.Conditions) == 0 {
 			updateStmt.Conditions = append(updateStmt.Conditions, []Condition{
 				{
-					Field:    "id",
+					Field:    DefaultIDField,
 					Operator: "=",
 					Value:    val.Field(i).Interface(),
 				},
@@ -646,10 +564,15 @@ func (s PostgreSQLConnector) update(ctx context.Context, model interface{}, cond
 	if err != nil {
 		return 0, err
 	}
-	db := s.GetConnection()
 
 	// Prepare the query
-	stmt, err := db.PrepareContext(ctx, q)
+	var stmt *sql.Stmt
+	if tx != nil {
+		stmt, err = tx.PrepareContext(ctx, q)
+	} else {
+		db := s.GetConnection()
+		stmt, err = db.PrepareContext(ctx, q)
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -706,226 +629,6 @@ func (s *PostgreSQLConnector) CommitTx(tx *sql.Tx) error {
 
 func (s *PostgreSQLConnector) RollbackTx(tx *sql.Tx) error {
 	return tx.Rollback()
-}
-
-func (s *PostgreSQLConnector) InsertWithTransactionAndContext(ctx context.Context, tx *sql.Tx, model interface{}) error {
-	insertStmt := DatabaseInsert{
-		Table: getTableNameFromModel(s.TablePrefix, model),
-	}
-	parseTags(model, &insertStmt.Fields)
-	q, args, err := buildInsertStmt(&insertStmt, model)
-	if err != nil {
-		return err
-	}
-	// Prepare the query
-	stmt, err := tx.PrepareContext(ctx, q)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-	// Execute the query
-	_, err = stmt.ExecContext(ctx, args...)
-	return err
-}
-func (s *PostgreSQLConnector) InsertWithTransaction(tx *sql.Tx, model interface{}) error {
-	ctx := context.Background()
-	insertStmt := DatabaseInsert{
-		Table: getTableNameFromModel(s.TablePrefix, model),
-	}
-	parseTags(model, &insertStmt.Fields)
-	q, args, err := buildInsertStmt(&insertStmt, model)
-	if err != nil {
-		return err
-	}
-	// Prepare the query
-	stmt, err := tx.PrepareContext(ctx, q)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-	// Execute the query
-	_, err = stmt.ExecContext(ctx, args...)
-	return err
-}
-
-func (s *PostgreSQLConnector) UpdateWithTransactionAndContext(ctx context.Context, tx *sql.Tx, model interface{}, conditionsOrNil interface{}) (int64, error) {
-	updateStmt := DatabaseUpdate{
-		Table: getTableNameFromModel(s.TablePrefix, model),
-	}
-	if conditionsOrNil != nil {
-		switch v := conditionsOrNil.(type) {
-		case []Condition:
-			updateStmt.Conditions = append(updateStmt.Conditions, v...)
-		default:
-			return 0, fmt.Errorf("conditionsOrNil must be a slice of Condition")
-		}
-	}
-	parseTags(model, &updateStmt.Fields)
-	val := reflect.ValueOf(model)
-	if val.Kind() == reflect.Ptr {
-		val = val.Elem()
-	}
-	t := val.Type()
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		if field.Tag.Get("db_column") == "id" && len(updateStmt.Conditions) == 0 {
-			updateStmt.Conditions = append(updateStmt.Conditions, []Condition{
-				{
-					Field:    "id",
-					Operator: "=",
-					Value:    val.Field(i).Interface(),
-				},
-			}...)
-			break
-		}
-	}
-	q, args, err := buildUpdateStmt(&updateStmt, model)
-	if err != nil {
-		return 0, err
-	}
-	// Prepare the query
-	stmt, err := tx.PrepareContext(ctx, q)
-	if err != nil {
-		return 0, err
-	}
-	defer stmt.Close()
-	// Execute the query
-	result, err := stmt.Exec(args...)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-func (s *PostgreSQLConnector) UpdateWithTransaction(tx *sql.Tx, model interface{}) (int64, error) {
-	ctx := context.Background()
-	updateStmt := DatabaseUpdate{
-		Table: getTableNameFromModel(s.TablePrefix, model),
-	}
-	parseTags(model, &updateStmt.Fields)
-	val := reflect.ValueOf(model)
-	if val.Kind() == reflect.Ptr {
-		val = val.Elem()
-	}
-	t := val.Type()
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		if field.Tag.Get("db_column") == "id" {
-			updateStmt.Conditions = []Condition{
-				{
-					Field:    "id",
-					Operator: "=",
-					Value:    val.Field(i).Interface(),
-				},
-			}
-			break
-		}
-	}
-	q, args, err := buildUpdateStmt(&updateStmt, model)
-	if err != nil {
-		return 0, err
-	}
-	// Prepare the query
-	stmt, err := tx.PrepareContext(ctx, q)
-	if err != nil {
-		return 0, err
-	}
-	defer stmt.Close()
-	// Execute the query
-	result, err := stmt.Exec(args...)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-func (s *PostgreSQLConnector) DeleteWithTransactionAndContext(ctx context.Context, tx *sql.Tx, model interface{}, condition ...Condition) error {
-	deleteStmt := DatabaseDelete{
-		Table:      getTableNameFromModel(s.TablePrefix, model),
-		Conditions: condition,
-	}
-	// Start the delete statement
-	sql := fmt.Sprintf("DELETE FROM %s", deleteStmt.Table)
-
-	// Add the conditions
-	var args []interface{}
-	if len(deleteStmt.Conditions) > 0 {
-		sql += " WHERE "
-		for i, condition := range deleteStmt.Conditions {
-			if i > 0 {
-				sql += " AND "
-			}
-			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
-				sql += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, i+1)
-			} else {
-				switch condition.Value.(type) {
-				case int, int32, int64, float32, float64:
-					sql += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, i+1)
-				default:
-					sql += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, i+1)
-				}
-			}
-			args = append(args, condition.Value)
-		}
-	}
-	// Prepare the statement
-	stmt, err := tx.PrepareContext(ctx, sql)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	// Execute the delete statement
-	_, err = stmt.Exec(args...)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (s *PostgreSQLConnector) DeleteWithTransaction(tx *sql.Tx, model interface{}, condition ...Condition) error {
-	ctx := context.Background()
-	deleteStmt := DatabaseDelete{
-		Table:      getTableNameFromModel(s.TablePrefix, model),
-		Conditions: condition,
-	}
-	// Start the delete statement
-	sql := fmt.Sprintf("DELETE FROM %s", deleteStmt.Table)
-
-	// Add the conditions
-	var args []interface{}
-	if len(deleteStmt.Conditions) > 0 {
-		sql += " WHERE "
-		for i, condition := range deleteStmt.Conditions {
-			if i > 0 {
-				sql += " AND "
-			}
-			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
-				sql += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, i+1)
-			} else {
-				switch condition.Value.(type) {
-				case int, int32, int64, float32, float64:
-					sql += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, i+1)
-				default:
-					sql += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, i+1)
-				}
-			}
-			args = append(args, condition.Value)
-		}
-	}
-	// Prepare the statement
-	stmt, err := tx.PrepareContext(ctx, sql)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	// Execute the delete statement
-	_, err = stmt.Exec(args...)
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 func prefixColumns(tableName string, columns []string) []string {
@@ -1012,4 +715,51 @@ func (s *PostgreSQLConnector) join(ctx context.Context, props *JoinProps) ([]map
 	}
 
 	return results, nil
+}
+
+// Simplified methods using options pattern
+
+// InsertModel is a simplified insert method that accepts optional context and transaction
+func (s PostgreSQLConnector) InsertModel(model interface{}, opts ...Option) error {
+	config := processOptions(opts)
+	if config.tx != nil {
+		return s.insertWithTx(config.ctx, config.tx, model)
+	}
+	return s.insert(config.ctx, model)
+}
+
+// DeleteModel is a simplified delete method that accepts optional context and transaction
+func (s PostgreSQLConnector) DeleteModel(model interface{}, conditions []Condition, opts ...Option) (int64, error) {
+	config := processOptions(opts)
+	if config.tx != nil {
+		return s.deleteWithTx(config.ctx, config.tx, model, conditions...)
+	}
+	return s.delete(config.ctx, model, conditions...)
+}
+
+// UpdateModel is a simplified update method that accepts optional context and transaction
+func (s PostgreSQLConnector) UpdateModel(model interface{}, conditions interface{}, opts ...Option) (int64, error) {
+	config := processOptions(opts)
+	if config.tx != nil {
+		return s.updateWithTx(config.ctx, config.tx, model, conditions)
+	}
+	return s.update(config.ctx, model, conditions)
+}
+
+// FindFirst is a simplified method to find the first record matching conditions
+func (s PostgreSQLConnector) FindFirst(model interface{}, conditionOrId interface{}, opts ...Option) error {
+	config := processOptions(opts)
+	if config.tx != nil {
+		return s.firstWithTransaction(config.ctx, config.tx, model, conditionOrId)
+	}
+	return s.first(config.ctx, model, conditionOrId)
+}
+
+// FindAll is a simplified method to find all records matching the query
+func (s PostgreSQLConnector) FindAll(models interface{}, queryProps *DatabaseQuery, opts ...Option) error {
+	config := processOptions(opts)
+	if config.tx != nil {
+		return s.allWithTransaction(config.ctx, config.tx, models, queryProps)
+	}
+	return s.all(config.ctx, models, queryProps)
 }

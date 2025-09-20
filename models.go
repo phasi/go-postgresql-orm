@@ -1,5 +1,36 @@
 package db
 
+import (
+	"context"
+	"database/sql"
+)
+
+const (
+	DefaultIDField     = "id"
+	DBColumnTag        = "db_column"
+	DefaultLimit       = 100
+	DefaultTablePrefix = "gpo_"
+)
+
+// Option represents a configuration option for database operations
+type Option func(*Config)
+
+// Config holds configuration for database operations
+type Config struct {
+	ctx context.Context
+	tx  *sql.Tx
+}
+
+// WithContext sets the context for database operations
+func WithContext(ctx context.Context) Option {
+	return func(c *Config) { c.ctx = ctx }
+}
+
+// WithTransaction sets the transaction for database operations
+func WithTransaction(tx *sql.Tx) Option {
+	return func(c *Config) { c.tx = tx }
+}
+
 type Condition struct {
 	Field    string
 	Operator string
@@ -23,7 +54,6 @@ type DatabaseQuery struct {
 
 type DatabaseDelete struct {
 	Table      string `json:"table"`
-	Model      interface{}
 	Conditions []Condition
 }
 

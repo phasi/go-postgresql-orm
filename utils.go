@@ -17,7 +17,7 @@ func parseTags(model interface{}, fields *Fields) FieldMap {
 	fieldMap := make(FieldMap)
 	for i := 0; i < val.NumField(); i++ {
 		typeField := val.Type().Field(i)
-		if tag, ok := typeField.Tag.Lookup("db_column"); ok {
+		if tag, ok := typeField.Tag.Lookup(DBColumnTag); ok {
 			*fields = append(*fields, tag)
 			fieldMap[tag] = typeField.Name
 		}
@@ -83,7 +83,7 @@ func getColumnsAndForeignKeysFromStruct(s interface{}) ([]Column, []ForeignKey) 
 
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		columnName, ok := field.Tag.Lookup("db_column")
+		columnName, ok := field.Tag.Lookup(DBColumnTag)
 		if ok {
 			columnLength, isSet := field.Tag.Lookup("db_column_length")
 			length := 0
@@ -321,7 +321,7 @@ func buildInsertStmt(params *DatabaseInsert, model interface{}) (string, []inter
 		var structFieldName string
 		for j := 0; j < t.NumField(); j++ {
 			field := t.Field(j)
-			if field.Tag.Get("db_column") == dbColumnName {
+			if field.Tag.Get(DBColumnTag) == dbColumnName {
 				structFieldName = field.Name
 				break
 			}
@@ -355,8 +355,8 @@ func buildPartialUpdateStmt(params *DatabaseUpdate, model interface{}) (string, 
 	}
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		dbColumn := field.Tag.Get("db_column")
-		if dbColumn == "id" || dbColumn == "" {
+		dbColumn := field.Tag.Get(DBColumnTag)
+		if dbColumn == DefaultIDField || dbColumn == "" {
 			continue
 		}
 		if !fieldMap[dbColumn] {
@@ -401,13 +401,13 @@ func buildUpdateStmt(params *DatabaseUpdate, model interface{}) (string, []inter
 	args := make([]interface{}, 0)
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		if field.Tag.Get("db_column") == "id" {
+		if field.Tag.Get(DBColumnTag) == DefaultIDField {
 			continue
 		}
-		if field.Tag.Get("db_column") == "" {
-			return "", nil, fmt.Errorf("no db_column tag found for field %s", field.Name)
+		if field.Tag.Get(DBColumnTag) == "" {
+			return "", nil, fmt.Errorf("no %s tag found for field %s", DBColumnTag, field.Name)
 		}
-		query += fmt.Sprintf("%s = $%d, ", field.Tag.Get("db_column"), len(args)+1)
+		query += fmt.Sprintf("%s = $%d, ", field.Tag.Get(DBColumnTag), len(args)+1)
 		args = append(args, val.Field(i).Interface())
 	}
 	query = strings.TrimSuffix(query, ", ")
@@ -433,4 +433,51 @@ func buildUpdateStmt(params *DatabaseUpdate, model interface{}) (string, []inter
 		}
 	}
 	return query, args, nil
+}
+
+// QueryBuilder provides a fluent interface for building SQL queries
+type QueryBuilder struct {
+	query    strings.Builder
+	args     []interface{}
+	argIndex int
+}
+
+// NewQueryBuilder creates a new QueryBuilder instance
+func NewQueryBuilder() *QueryBuilder {
+	return &QueryBuilder{argIndex: 1}
+}
+
+// Where adds a WHERE condition to the query
+func (qb *QueryBuilder) Where(field, operator string, value interface{}) *QueryBuilder {
+	if qb.argIndex == 1 {
+		qb.query.WriteString(" WHERE ")
+	} else {
+		qb.query.WriteString(" AND ")
+	}
+	qb.query.WriteString(fmt.Sprintf("%s %s $%d", field, operator, qb.argIndex))
+	qb.args = append(qb.args, value)
+	qb.argIndex++
+	return qb
+}
+
+// OrderBy adds an ORDER BY clause to the query
+func (qb *QueryBuilder) OrderBy(field string, descending bool) *QueryBuilder {
+	qb.query.WriteString(fmt.Sprintf(" ORDER BY %s", field))
+	if descending {
+		qb.query.WriteString(" DESC")
+	}
+	return qb
+}
+
+// Limit adds a LIMIT clause to the query
+func (qb *QueryBuilder) Limit(limit int) *QueryBuilder {
+	if limit > 0 {
+		qb.query.WriteString(fmt.Sprintf(" LIMIT %d", limit))
+	}
+	return qb
+}
+
+// Build returns the final query string and arguments
+func (qb *QueryBuilder) Build() (string, []interface{}) {
+	return qb.query.String(), qb.args
 }

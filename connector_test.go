@@ -117,12 +117,12 @@ func TestCreateTables(t *testing.T) {
 
 func TestInsertUser(t *testing.T) {
 	r := fakeHttpRequest()
-	err := connector.InsertWithContext(r.Context(), &TestUser{
+	err := connector.InsertModel(&TestUser{
 		ID:       testUserId,
 		Email:    "test@example.com",
 		Name:     "Test User",
 		UserType: 1,
-	})
+	}, WithContext(r.Context()))
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
@@ -131,7 +131,7 @@ func TestInsertUser(t *testing.T) {
 func TestSelectUser(t *testing.T) {
 	r := fakeHttpRequest()
 	m := &TestUser{}
-	err := connector.FirstWithContext(r.Context(), m, testUserId)
+	err := connector.FindFirst(m, testUserId, WithContext(r.Context()))
 	t.Logf("Original model: %v", m)
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
@@ -140,10 +140,10 @@ func TestSelectUser(t *testing.T) {
 
 func TestInsertCompany(t *testing.T) {
 	r := fakeHttpRequest()
-	err := connector.InsertWithContext(r.Context(), &TestCompany{
+	err := connector.InsertModel(&TestCompany{
 		ID:          testCompanyId,
 		CompanyName: "Test Company",
-	})
+	}, WithContext(r.Context()))
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
@@ -152,7 +152,7 @@ func TestInsertCompany(t *testing.T) {
 func TestSelectCompany(t *testing.T) {
 	r := fakeHttpRequest()
 	m := &TestCompany{}
-	err := connector.FirstWithContext(r.Context(), m, testCompanyId)
+	err := connector.FindFirst(m, testCompanyId, WithContext(r.Context()))
 	t.Logf("Original model: %v", m)
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
@@ -161,12 +161,12 @@ func TestSelectCompany(t *testing.T) {
 
 func TestInsertUserCompanyPermission(t *testing.T) {
 	r := fakeHttpRequest()
-	err := connector.InsertWithContext(r.Context(), &TestUserCompanyPermission{
+	err := connector.InsertModel(&TestUserCompanyPermission{
 		ID:        testPermissionId,
 		UserID:    testUserId,
 		CompanyID: testCompanyId,
 		Role:      "admin",
-	})
+	}, WithContext(r.Context()))
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
@@ -175,7 +175,7 @@ func TestInsertUserCompanyPermission(t *testing.T) {
 func TestSelectUserCompanyPermission(t *testing.T) {
 	r := fakeHttpRequest()
 	m := &TestUserCompanyPermission{}
-	err := connector.FirstWithContext(r.Context(), m, testPermissionId)
+	err := connector.FindFirst(m, testPermissionId, WithContext(r.Context()))
 	t.Logf("Original model: %v", m)
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
@@ -184,11 +184,11 @@ func TestSelectUserCompanyPermission(t *testing.T) {
 
 func TestUpdateUser(t *testing.T) {
 	r := fakeHttpRequest()
-	affected, err := connector.UpdateWithContext(r.Context(), &TestUser{
+	affected, err := connector.UpdateModel(&TestUser{
 		ID:    testUserId,
 		Email: "updated@example.com",
 		Name:  "Updated User",
-	}, nil)
+	}, nil, WithContext(r.Context()))
 	if affected == 0 {
 		t.Error("update should have succeeded but nothing was changed")
 	}
@@ -206,7 +206,7 @@ func TestInsertMoreUsers(t *testing.T) {
 			Name:     fmt.Sprintf("Test User %d", i),
 			UserType: 1,
 		}
-		err := connector.InsertWithContext(r.Context(), &model)
+		err := connector.InsertModel(&model, WithContext(r.Context()))
 		if err != nil {
 			t.Errorf("error should be nil, but was: %s", err)
 		}
@@ -216,7 +216,7 @@ func TestInsertMoreUsers(t *testing.T) {
 func TestSelectAllUsers(t *testing.T) {
 	r := fakeHttpRequest()
 	models := []TestUser{}
-	err := connector.AllWithContext(r.Context(), &models, &DatabaseQuery{})
+	err := connector.FindAll(&models, &DatabaseQuery{}, WithContext(r.Context()))
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
@@ -229,10 +229,10 @@ func TestSelectAllUsers(t *testing.T) {
 func TestSelectAllUsersInDescendingOrder(t *testing.T) {
 	r := fakeHttpRequest()
 	models := []TestUser{}
-	err := connector.AllWithContext(r.Context(), &models, &DatabaseQuery{
+	err := connector.FindAll(&models, &DatabaseQuery{
 		OrderBy:    "email",
 		Descending: true,
-	})
+	}, WithContext(r.Context()))
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
@@ -245,7 +245,7 @@ func TestSelectAllUsersInDescendingOrder(t *testing.T) {
 func TestSelectUsersWithCondition(t *testing.T) {
 	r := fakeHttpRequest()
 	models := []TestUser{}
-	err := connector.AllWithContext(r.Context(), &models, &DatabaseQuery{
+	err := connector.FindAll(&models, &DatabaseQuery{
 		Conditions: []Condition{
 			{
 				Field:    "user_type",
@@ -258,7 +258,7 @@ func TestSelectUsersWithCondition(t *testing.T) {
 				Value:    2,
 			},
 		},
-	})
+	}, WithContext(r.Context()))
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
@@ -271,9 +271,9 @@ func TestSelectUsersWithCondition(t *testing.T) {
 func TestSelectLimitedUsers(t *testing.T) {
 	r := fakeHttpRequest()
 	models := []TestUser{}
-	err := connector.AllWithContext(r.Context(), &models, &DatabaseQuery{
+	err := connector.FindAll(&models, &DatabaseQuery{
 		Limit: 5,
-	})
+	}, WithContext(r.Context()))
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
@@ -286,7 +286,7 @@ func TestSelectLimitedUsers(t *testing.T) {
 func TestSelectLimitedUsersWithCondition(t *testing.T) {
 	r := fakeHttpRequest()
 	models := []TestUser{}
-	err := connector.AllWithContext(r.Context(), &models, &DatabaseQuery{
+	err := connector.FindAll(&models, &DatabaseQuery{
 		Conditions: []Condition{
 			{
 				Field:    "user_type",
@@ -295,7 +295,7 @@ func TestSelectLimitedUsersWithCondition(t *testing.T) {
 			},
 		},
 		Limit: 2,
-	})
+	}, WithContext(r.Context()))
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
@@ -312,7 +312,7 @@ func TestSelectPageOne(t *testing.T) {
 		AllowPagination: true,
 	}
 	ParseQueryParamsFromRequest(r, query)
-	err := connector.AllWithContext(r.Context(), &models, query)
+	err := connector.FindAll(&models, query, WithContext(r.Context()))
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
@@ -329,7 +329,7 @@ func TestSelectPageTwo(t *testing.T) {
 		AllowPagination: true,
 	}
 	ParseQueryParamsFromRequest(r, query)
-	err := connector.AllWithContext(r.Context(), &models, query)
+	err := connector.FindAll(&models, query, WithContext(r.Context()))
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
@@ -348,7 +348,7 @@ func TestSelectUsersWithSearch(t *testing.T) {
 	}
 	ParseQueryParamsFromRequest(r, query)
 	fmt.Println(query)
-	err := connector.AllWithContext(r.Context(), &models, query)
+	err := connector.FindAll(&models, query, WithContext(r.Context()))
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
@@ -360,7 +360,12 @@ func TestSelectUsersWithSearch(t *testing.T) {
 
 func TestDeleteOne(t *testing.T) {
 	r := fakeHttpRequest()
-	affected, err := connector.DeleteByIdWithContext(r.Context(), &TestUser{}, testUserId)
+	condition := Condition{
+		Field:    DefaultIDField,
+		Operator: "=",
+		Value:    testUserId,
+	}
+	affected, err := connector.DeleteModel(&TestUser{}, []Condition{condition}, WithContext(r.Context()))
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
@@ -371,7 +376,7 @@ func TestDeleteOne(t *testing.T) {
 
 func TestDeleteAllWithContext(t *testing.T) {
 	r := fakeHttpRequest()
-	affected, err := connector.DeleteWithContext(r.Context(), &TestUser{})
+	affected, err := connector.DeleteModel(&TestUser{}, []Condition{}, WithContext(r.Context()))
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
