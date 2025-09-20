@@ -345,10 +345,22 @@ func (s PostgreSQLConnector) all(ctx context.Context, models interface{}, queryP
 		return fmt.Errorf("error handling %s: models must be a pointer to a slice", val.Type())
 	}
 
-	if queryProps.Table == "" && queryProps.Model != nil {
-		queryProps.Table = getTableNameFromModel(s.TablePrefix, queryProps.Model)
+	// Extract model type from slice if not provided
+	var modelInstance interface{}
+	if queryProps.Model != nil {
+		modelInstance = queryProps.Model
+	} else {
+		// Get the element type of the slice
+		sliceType := val.Elem().Type()
+		elementType := sliceType.Elem()
+		// Create a new instance of the element type
+		modelInstance = reflect.New(elementType).Interface()
 	}
-	fieldMap := parseTags(queryProps.Model, &queryProps.fields)
+
+	if queryProps.Table == "" {
+		queryProps.Table = getTableNameFromModel(s.TablePrefix, modelInstance)
+	}
+	fieldMap := parseTags(modelInstance, &queryProps.fields)
 	rows, err := s.doQuery(ctx, queryProps)
 	if err != nil {
 		return fmt.Errorf("error querying database: %v", err)
@@ -359,7 +371,10 @@ func (s PostgreSQLConnector) all(ctx context.Context, models interface{}, queryP
 	// scan rows into "models" slice
 	for rows.Next() {
 		scanArgs := make([]interface{}, len(columns))
-		modelType := reflect.TypeOf(queryProps.Model).Elem()
+		modelType := reflect.TypeOf(modelInstance)
+		if modelType.Kind() == reflect.Ptr {
+			modelType = modelType.Elem()
+		}
 		modelVal := reflect.New(modelType)
 		for i, column := range columns {
 			if field, ok := fieldMap[column]; ok {
@@ -391,10 +406,22 @@ func (s PostgreSQLConnector) allWithTransaction(ctx context.Context, tx *sql.Tx,
 		return fmt.Errorf("error handling %s: models must be a pointer to a slice", val.Type())
 	}
 
-	if queryProps.Table == "" && queryProps.Model != nil {
-		queryProps.Table = getTableNameFromModel(s.TablePrefix, queryProps.Model)
+	// Extract model type from slice if not provided
+	var modelInstance interface{}
+	if queryProps.Model != nil {
+		modelInstance = queryProps.Model
+	} else {
+		// Get the element type of the slice
+		sliceType := val.Elem().Type()
+		elementType := sliceType.Elem()
+		// Create a new instance of the element type
+		modelInstance = reflect.New(elementType).Interface()
 	}
-	fieldMap := parseTags(queryProps.Model, &queryProps.fields)
+
+	if queryProps.Table == "" {
+		queryProps.Table = getTableNameFromModel(s.TablePrefix, modelInstance)
+	}
+	fieldMap := parseTags(modelInstance, &queryProps.fields)
 	rows, err := s.doQueryInTransaction(ctx, tx, queryProps)
 	if err != nil {
 		return fmt.Errorf("error querying database: %v", err)
@@ -405,7 +432,10 @@ func (s PostgreSQLConnector) allWithTransaction(ctx context.Context, tx *sql.Tx,
 	// scan rows into "models" slice
 	for rows.Next() {
 		scanArgs := make([]interface{}, len(columns))
-		modelType := reflect.TypeOf(queryProps.Model).Elem()
+		modelType := reflect.TypeOf(modelInstance)
+		if modelType.Kind() == reflect.Ptr {
+			modelType = modelType.Elem()
+		}
 		modelVal := reflect.New(modelType)
 		for i, column := range columns {
 			if field, ok := fieldMap[column]; ok {

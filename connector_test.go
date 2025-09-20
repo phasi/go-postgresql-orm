@@ -216,9 +216,7 @@ func TestInsertMoreUsers(t *testing.T) {
 func TestSelectAllUsers(t *testing.T) {
 	r := fakeHttpRequest()
 	models := []TestUser{}
-	err := connector.AllWithContext(r.Context(), &models, &DatabaseQuery{
-		Model: &TestUser{},
-	})
+	err := connector.AllWithContext(r.Context(), &models, &DatabaseQuery{})
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}
@@ -232,7 +230,6 @@ func TestSelectAllUsersInDescendingOrder(t *testing.T) {
 	r := fakeHttpRequest()
 	models := []TestUser{}
 	err := connector.AllWithContext(r.Context(), &models, &DatabaseQuery{
-		Model:      &TestUser{},
 		OrderBy:    "email",
 		Descending: true,
 	})
@@ -249,7 +246,6 @@ func TestSelectUsersWithCondition(t *testing.T) {
 	r := fakeHttpRequest()
 	models := []TestUser{}
 	err := connector.AllWithContext(r.Context(), &models, &DatabaseQuery{
-		Model: &TestUser{},
 		Condition: []Condition{
 			{
 				Field:    "user_type",
@@ -276,7 +272,6 @@ func TestSelectLimitedUsers(t *testing.T) {
 	r := fakeHttpRequest()
 	models := []TestUser{}
 	err := connector.AllWithContext(r.Context(), &models, &DatabaseQuery{
-		Model: &TestUser{},
 		Limit: 5,
 	})
 	if err != nil {
@@ -292,7 +287,6 @@ func TestSelectLimitedUsersWithCondition(t *testing.T) {
 	r := fakeHttpRequest()
 	models := []TestUser{}
 	err := connector.AllWithContext(r.Context(), &models, &DatabaseQuery{
-		Model: &TestUser{},
 		Condition: []Condition{
 			{
 				Field:    "user_type",
@@ -315,7 +309,6 @@ func TestSelectPageOne(t *testing.T) {
 	r := fakeHttpRequestWithQueryParams("", "5", "", "")
 	models := []TestUser{}
 	query := &DatabaseQuery{
-		Model:           &TestUser{},
 		AllowPagination: true,
 	}
 	ParseQueryParamsFromRequest(r, query)
@@ -333,7 +326,6 @@ func TestSelectPageTwo(t *testing.T) {
 	r := fakeHttpRequestWithQueryParams("", "5", "5", "")
 	models := []TestUser{}
 	query := &DatabaseQuery{
-		Model:           &TestUser{},
 		AllowPagination: true,
 	}
 	ParseQueryParamsFromRequest(r, query)
@@ -351,7 +343,6 @@ func TestSelectUsersWithSearch(t *testing.T) {
 	r := fakeHttpRequestWithQueryParams("", "", "", "test5")
 	models := []TestUser{}
 	query := &DatabaseQuery{
-		Model:        &TestUser{},
 		AllowSearch:  true,
 		SearchFields: []string{"email"},
 	}

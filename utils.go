@@ -192,7 +192,9 @@ func getTableNameFromModel(tablePrefix string, model interface{}) string {
 }
 
 func buildQuery(params *DatabaseQuery) (string, []interface{}) {
-	parseTags(params.Model, &params.fields)
+	if len(params.fields) == 0 && params.Model != nil {
+		parseTags(params.Model, &params.fields)
+	}
 	var query string
 	args := make([]interface{}, 0)
 	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.fields.String(), ","), params.Table)
@@ -255,7 +257,9 @@ func ParseQueryParamsFromRequest(r *http.Request, query *DatabaseQuery) {
 }
 
 func buildAdvancedQuery(params *DatabaseQuery) (string, []interface{}) {
-	parseTags(params.Model, &params.fields)
+	if len(params.fields) == 0 && params.Model != nil {
+		parseTags(params.Model, &params.fields)
+	}
 	var query string
 	args := make([]interface{}, 0)
 	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.fields.String(), ","), params.Table)
