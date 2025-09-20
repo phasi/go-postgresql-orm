@@ -9,9 +9,7 @@ type Condition struct {
 type DatabaseQuery struct {
 	Table string
 	// Fields is a slice of strings that represent the fields to be selected
-	fields Fields
-	// pass a struct as Model with "db_column" tags in properties
-	Model           interface{}
+	fields          Fields
 	Condition       []Condition
 	OrderBy         string
 	Limit           int
