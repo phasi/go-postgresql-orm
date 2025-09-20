@@ -195,9 +195,9 @@ func buildQuery(params *DatabaseQuery) (string, []interface{}) {
 	var query string
 	args := make([]interface{}, 0)
 	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.fields.String(), ","), params.Table)
-	if len(params.Condition) > 0 {
+	if len(params.Conditions) > 0 {
 		query += " WHERE "
-		for i, condition := range params.Condition {
+		for i, condition := range params.Conditions {
 			if i > 0 {
 				query += " AND "
 			}
@@ -257,9 +257,9 @@ func buildAdvancedQuery(params *DatabaseQuery) (string, []interface{}) {
 	var query string
 	args := make([]interface{}, 0)
 	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.fields.String(), ","), params.Table)
-	if len(params.Condition) > 0 || len(params.SearchFields) > 0 {
+	if len(params.Conditions) > 0 || len(params.SearchFields) > 0 {
 		query += " WHERE "
-		for i, condition := range params.Condition {
+		for i, condition := range params.Conditions {
 			if i > 0 {
 				query += " AND "
 			}
@@ -278,7 +278,7 @@ func buildAdvancedQuery(params *DatabaseQuery) (string, []interface{}) {
 			}
 		}
 		for i, field := range params.SearchFields {
-			if len(params.Condition) > 0 || i > 0 {
+			if len(params.Conditions) > 0 || i > 0 {
 				query += " OR "
 			}
 			query += fmt.Sprintf("%s LIKE $%d", field, len(args)+1)
@@ -366,9 +366,9 @@ func buildPartialUpdateStmt(params *DatabaseUpdate, model interface{}) (string, 
 		args = append(args, val.Field(i).Interface())
 	}
 	query = strings.TrimSuffix(query, ", ")
-	if len(params.Condition) > 0 {
+	if len(params.Conditions) > 0 {
 		query += " WHERE "
-		for i, condition := range params.Condition {
+		for i, condition := range params.Conditions {
 			if i > 0 {
 				query += " AND "
 			}
@@ -411,9 +411,9 @@ func buildUpdateStmt(params *DatabaseUpdate, model interface{}) (string, []inter
 		args = append(args, val.Field(i).Interface())
 	}
 	query = strings.TrimSuffix(query, ", ")
-	if len(params.Condition) > 0 {
+	if len(params.Conditions) > 0 {
 		query += " WHERE "
-		for i, condition := range params.Condition {
+		for i, condition := range params.Conditions {
 			if i > 0 {
 				query += " AND "
 			}

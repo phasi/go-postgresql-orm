@@ -225,7 +225,7 @@ func (s PostgreSQLConnector) first(ctx context.Context, model interface{}, condi
 	}
 	var queryProps DatabaseQuery
 	queryProps.Table = getTableNameFromModel(s.TablePrefix, model)
-	queryProps.Condition = condition
+	queryProps.Conditions = condition
 	queryProps.Limit = 1
 	fieldMap := parseTags(model, &queryProps.fields)
 	rows, err := s.doQuery(ctx, &queryProps)
@@ -286,7 +286,7 @@ func (s PostgreSQLConnector) firstWithTransaction(ctx context.Context, tx *sql.T
 	}
 	var queryProps DatabaseQuery
 	queryProps.Table = getTableNameFromModel(s.TablePrefix, model)
-	queryProps.Condition = condition
+	queryProps.Conditions = condition
 	queryProps.Limit = 1
 	fieldMap := parseTags(model, &queryProps.fields)
 	rows, err := s.doQueryInTransaction(ctx, tx, &queryProps)
@@ -495,8 +495,8 @@ func (s PostgreSQLConnector) Delete(model interface{}, condition ...Condition) (
 
 func (s PostgreSQLConnector) delete(ctx context.Context, model interface{}, condition ...Condition) (int64, error) {
 	deleteStmt := DatabaseDelete{
-		Table:     getTableNameFromModel(s.TablePrefix, model),
-		Condition: condition,
+		Table:      getTableNameFromModel(s.TablePrefix, model),
+		Conditions: condition,
 	}
 
 	db := s.GetConnection()
@@ -506,9 +506,9 @@ func (s PostgreSQLConnector) delete(ctx context.Context, model interface{}, cond
 
 	// Add the conditions
 	var args []interface{}
-	if len(deleteStmt.Condition) > 0 {
+	if len(deleteStmt.Conditions) > 0 {
 		sql += " WHERE "
-		for i, condition := range deleteStmt.Condition {
+		for i, condition := range deleteStmt.Conditions {
 			if i > 0 {
 				sql += " AND "
 			}
@@ -582,9 +582,9 @@ func (s PostgreSQLConnector) Update(model interface{}, conditionsOrNil interface
 
 func (s PostgreSQLConnector) updatePartial(ctx context.Context, model interface{}, condition []Condition, fields Fields, tx *sql.Tx) (int64, error) {
 	updateStmt := DatabaseUpdate{
-		Table:     getTableNameFromModel(s.TablePrefix, model),
-		Fields:    fields,
-		Condition: condition,
+		Table:      getTableNameFromModel(s.TablePrefix, model),
+		Fields:     fields,
+		Conditions: condition,
 	}
 	q, args, err := buildPartialUpdateStmt(&updateStmt, model)
 	if err != nil {
@@ -618,7 +618,7 @@ func (s PostgreSQLConnector) update(ctx context.Context, model interface{}, cond
 	if conditionsOrNil != nil {
 		switch v := conditionsOrNil.(type) {
 		case []Condition:
-			updateStmt.Condition = append(updateStmt.Condition, v...)
+			updateStmt.Conditions = append(updateStmt.Conditions, v...)
 		default:
 			return 0, fmt.Errorf("conditionsOrNil must be a slice of Condition")
 		}
@@ -631,8 +631,8 @@ func (s PostgreSQLConnector) update(ctx context.Context, model interface{}, cond
 	t := val.Type()
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		if field.Tag.Get("db_column") == "id" && len(updateStmt.Condition) == 0 {
-			updateStmt.Condition = append(updateStmt.Condition, []Condition{
+		if field.Tag.Get("db_column") == "id" && len(updateStmt.Conditions) == 0 {
+			updateStmt.Conditions = append(updateStmt.Conditions, []Condition{
 				{
 					Field:    "id",
 					Operator: "=",
@@ -755,7 +755,7 @@ func (s *PostgreSQLConnector) UpdateWithTransactionAndContext(ctx context.Contex
 	if conditionsOrNil != nil {
 		switch v := conditionsOrNil.(type) {
 		case []Condition:
-			updateStmt.Condition = append(updateStmt.Condition, v...)
+			updateStmt.Conditions = append(updateStmt.Conditions, v...)
 		default:
 			return 0, fmt.Errorf("conditionsOrNil must be a slice of Condition")
 		}
@@ -768,8 +768,8 @@ func (s *PostgreSQLConnector) UpdateWithTransactionAndContext(ctx context.Contex
 	t := val.Type()
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		if field.Tag.Get("db_column") == "id" && len(updateStmt.Condition) == 0 {
-			updateStmt.Condition = append(updateStmt.Condition, []Condition{
+		if field.Tag.Get("db_column") == "id" && len(updateStmt.Conditions) == 0 {
+			updateStmt.Conditions = append(updateStmt.Conditions, []Condition{
 				{
 					Field:    "id",
 					Operator: "=",
@@ -811,7 +811,7 @@ func (s *PostgreSQLConnector) UpdateWithTransaction(tx *sql.Tx, model interface{
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		if field.Tag.Get("db_column") == "id" {
-			updateStmt.Condition = []Condition{
+			updateStmt.Conditions = []Condition{
 				{
 					Field:    "id",
 					Operator: "=",
@@ -841,17 +841,17 @@ func (s *PostgreSQLConnector) UpdateWithTransaction(tx *sql.Tx, model interface{
 
 func (s *PostgreSQLConnector) DeleteWithTransactionAndContext(ctx context.Context, tx *sql.Tx, model interface{}, condition ...Condition) error {
 	deleteStmt := DatabaseDelete{
-		Table:     getTableNameFromModel(s.TablePrefix, model),
-		Condition: condition,
+		Table:      getTableNameFromModel(s.TablePrefix, model),
+		Conditions: condition,
 	}
 	// Start the delete statement
 	sql := fmt.Sprintf("DELETE FROM %s", deleteStmt.Table)
 
 	// Add the conditions
 	var args []interface{}
-	if len(deleteStmt.Condition) > 0 {
+	if len(deleteStmt.Conditions) > 0 {
 		sql += " WHERE "
-		for i, condition := range deleteStmt.Condition {
+		for i, condition := range deleteStmt.Conditions {
 			if i > 0 {
 				sql += " AND "
 			}
@@ -886,17 +886,17 @@ func (s *PostgreSQLConnector) DeleteWithTransactionAndContext(ctx context.Contex
 func (s *PostgreSQLConnector) DeleteWithTransaction(tx *sql.Tx, model interface{}, condition ...Condition) error {
 	ctx := context.Background()
 	deleteStmt := DatabaseDelete{
-		Table:     getTableNameFromModel(s.TablePrefix, model),
-		Condition: condition,
+		Table:      getTableNameFromModel(s.TablePrefix, model),
+		Conditions: condition,
 	}
 	// Start the delete statement
 	sql := fmt.Sprintf("DELETE FROM %s", deleteStmt.Table)
 
 	// Add the conditions
 	var args []interface{}
-	if len(deleteStmt.Condition) > 0 {
+	if len(deleteStmt.Conditions) > 0 {
 		sql += " WHERE "
-		for i, condition := range deleteStmt.Condition {
+		for i, condition := range deleteStmt.Conditions {
 			if i > 0 {
 				sql += " AND "
 			}
@@ -958,9 +958,9 @@ func (s *PostgreSQLConnector) join(ctx context.Context, props *JoinProps) ([]map
 	)
 
 	var args []interface{}
-	if len(props.WhereCondition) > 0 {
+	if len(props.WhereConditions) > 0 {
 		query += " WHERE "
-		for i, condition := range props.WhereCondition {
+		for i, condition := range props.WhereConditions {
 			if i > 0 {
 				query += " AND "
 			}

@@ -10,7 +10,7 @@ type DatabaseQuery struct {
 	Table string
 	// Fields is a slice of strings that represent the fields to be selected
 	fields          Fields
-	Condition       []Condition
+	Conditions      []Condition
 	OrderBy         string
 	Limit           int
 	Offset          int
@@ -22,15 +22,15 @@ type DatabaseQuery struct {
 }
 
 type DatabaseDelete struct {
-	Table     string `json:"table"`
-	Model     interface{}
-	Condition []Condition
+	Table      string `json:"table"`
+	Model      interface{}
+	Conditions []Condition
 }
 
 type DatabaseUpdate struct {
-	Table     string `json:"table"`
-	Fields    Fields `json:"fields"`
-	Condition []Condition
+	Table      string `json:"table"`
+	Fields     Fields `json:"fields"`
+	Conditions []Condition
 }
 
 type FieldMap map[string]string
@@ -91,10 +91,10 @@ func (f Fields) String() []string {
 }
 
 type JoinProps struct {
-	MainTableModel interface{}
-	JoinTableModel interface{}
-	MainTableCols  []string
-	JoinTableCols  []string
-	JoinCondition  string
-	WhereCondition []Condition
+	MainTableModel  interface{}
+	JoinTableModel  interface{}
+	MainTableCols   []string
+	JoinTableCols   []string
+	JoinCondition   string
+	WhereConditions []Condition
 }

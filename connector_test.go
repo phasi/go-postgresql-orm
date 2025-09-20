@@ -246,7 +246,7 @@ func TestSelectUsersWithCondition(t *testing.T) {
 	r := fakeHttpRequest()
 	models := []TestUser{}
 	err := connector.AllWithContext(r.Context(), &models, &DatabaseQuery{
-		Condition: []Condition{
+		Conditions: []Condition{
 			{
 				Field:    "user_type",
 				Operator: ">=",
@@ -287,7 +287,7 @@ func TestSelectLimitedUsersWithCondition(t *testing.T) {
 	r := fakeHttpRequest()
 	models := []TestUser{}
 	err := connector.AllWithContext(r.Context(), &models, &DatabaseQuery{
-		Condition: []Condition{
+		Conditions: []Condition{
 			{
 				Field:    "user_type",
 				Operator: "=",
