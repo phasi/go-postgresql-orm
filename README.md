@@ -24,10 +24,11 @@ You can tag your models' properties as per below example. It affects how the tab
 
 #### Supported tags
 
-NOTE THAT PRIMARY KEY MUST ALWAYS BE "id" in database, so where ever you put 'id' will make that column become the primary key.
+You can tag primary key by defining `db_pk`. The primary key column doesn't have to be named "id" but if no `db_pk` is present then `db_column:"id"` is used as a fallback.
 
 | Tag name         | Description                                          |
 | ---------------- | ---------------------------------------------------- |
+| db_pk            | Marks a field as the primary key                     |
 | db_column        | Name of the column in database                       |
 | db_column_length | Max length of the column                             |
 | db_nullable      | Presence of this tag makes the column nullable       |
@@ -39,15 +40,16 @@ _Example:_
 
 ```go
 type TestModel struct {
-	ID          uuid.UUID `db_column:"id"`
+	ID          uuid.UUID `db_column:"id" db_pk:""`                    // Primary key (can be any column name)
 	StringValue string    `db_column:"string_value" db_column_length:"10"`
 	IntValue    int       `db_column:"int_value"`
 	UniqueValue string    `db_column:"unique_value" db_unique:""`
 }
+
 type TestRelatedModel struct {
-	ID          uuid.UUID `db_column:"id"`
-	TestModelID uuid.UUID `db_column:"test_model_id" db_fk:"orm_testmodel(id)" db_nullable:"" db_fk_on_delete:"set null"`
-	StringValue string    `db_column:"string_value"`
+	MyPrimaryKey uuid.UUID `db_column:"my_pk" db_pk:""`              // Custom primary key name
+	TestModelID  uuid.UUID `db_column:"test_model_id" db_fk:"orm_testmodel(id)" db_nullable:"" db_fk_on_delete:"set null"`
+	StringValue  string    `db_column:"string_value"`
 }
 ```
 
@@ -133,10 +135,10 @@ err := connector.InsertModel(&model, WithContext(ctx), WithTransaction(tx))
 
 ### Find First Record
 
-Select a single record by ID or condition.
+Select a single record by ID or condition. The library automatically detects the primary key field using the `db_pk` tag.
 
 ```go
-// Find by ID
+// Find by ID (automatically uses the field marked with db_pk tag)
 m := &TestModel{}
 err := connector.FindFirst(m, "4d701cf7-e218-4499-8092-7c085118e373")
 
@@ -209,10 +211,10 @@ err := connector.FindAll(&models, query)
 
 ### Update Records
 
-Update records with optional conditions.
+Update records with optional conditions. When no conditions are provided, the library automatically uses the primary key field (marked with `db_pk` tag) for the WHERE clause.
 
 ```go
-// Update by primary key (ID field in the model)
+// Update by primary key (automatically detects the field marked with db_pk tag)
 model := &TestModel{
     ID:          existingID,
     StringValue: "updated value",

@@ -7,7 +7,13 @@ import (
 
 const (
 	DefaultIDField     = "id"
+	DBPKTag            = "db_pk"
 	DBColumnTag        = "db_column"
+	DBUniqueTag        = "db_unique"
+	DBNullableTag      = "db_nullable"
+	DBColumnLengthTag  = "db_column_length"
+	DBFKOnDeleteTag    = "db_fk_on_delete"
+	DBFKTag            = "db_fk"
 	DefaultLimit       = 100
 	DefaultTablePrefix = "gpo_"
 )
@@ -120,6 +126,15 @@ func (f Fields) String() []string {
 	return fields
 }
 
+type JoinType string
+
+const (
+	InnerJoin JoinType = "INNER JOIN"
+	LeftJoin  JoinType = "LEFT JOIN"
+	RightJoin JoinType = "RIGHT JOIN"
+	FullJoin  JoinType = "FULL OUTER JOIN"
+)
+
 type JoinProps struct {
 	MainTableModel  interface{}
 	JoinTableModel  interface{}
@@ -127,4 +142,5 @@ type JoinProps struct {
 	JoinTableCols   []string
 	JoinCondition   string
 	WhereConditions []Condition
+	JoinType        JoinType // Required field - no default
 }

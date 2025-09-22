@@ -146,13 +146,7 @@ func (s PostgreSQLConnector) insertWithTx(ctx context.Context, tx *sql.Tx, model
 	}
 
 	// Prepare the query
-	var stmt *sql.Stmt
-	if tx != nil {
-		stmt, err = tx.PrepareContext(ctx, q)
-	} else {
-		db := s.GetConnection()
-		stmt, err = db.PrepareContext(ctx, q)
-	}
+	stmt, err := prepareStatement(ctx, tx, s.GetConnection(), q)
 	if err != nil {
 		return
 	}
@@ -163,44 +157,22 @@ func (s PostgreSQLConnector) insertWithTx(ctx context.Context, tx *sql.Tx, model
 }
 
 func (s PostgreSQLConnector) CustomMutate(ctx context.Context, transactionOrNil *sql.Tx, query string, args ...interface{}) (result *sql.Result, err error) {
-	var stmt *sql.Stmt
-	if transactionOrNil != nil {
-		stmt, err := transactionOrNil.PrepareContext(ctx, query)
-		if err != nil {
-			return nil, err
-		}
-		defer stmt.Close()
-	} else {
-		db := s.GetConnection()
-		// Prepare the query
-		stmt, err := db.PrepareContext(ctx, query)
-		if err != nil {
-			return nil, err
-		}
-		defer stmt.Close()
+	stmt, err := prepareStatement(ctx, transactionOrNil, s.GetConnection(), query)
+	if err != nil {
+		return nil, err
 	}
+	defer stmt.Close()
 	// Execute the query
 	res, err := stmt.ExecContext(ctx, args...)
 	return &res, err
 }
 
 func (s PostgreSQLConnector) CustomQuery(ctx context.Context, transactionOrNil *sql.Tx, query string, args ...interface{}) (rows *sql.Rows, err error) {
-	var stmt *sql.Stmt
-	if transactionOrNil != nil {
-		stmt, err := transactionOrNil.PrepareContext(ctx, query)
-		if err != nil {
-			return nil, err
-		}
-		defer stmt.Close()
-	} else {
-		db := s.GetConnection()
-		// Prepare the query
-		stmt, err := db.PrepareContext(ctx, query)
-		if err != nil {
-			return nil, err
-		}
-		defer stmt.Close()
+	stmt, err := prepareStatement(ctx, transactionOrNil, s.GetConnection(), query)
+	if err != nil {
+		return nil, err
 	}
+	defer stmt.Close()
 	// Perform a query
 	rows, err = stmt.QueryContext(ctx, args...)
 	if err != nil {
@@ -218,13 +190,7 @@ func (s PostgreSQLConnector) first(ctx context.Context, model interface{}, condi
 	case []Condition:
 		condition = v
 	default:
-		condition = []Condition{
-			{
-				Field:    DefaultIDField,
-				Operator: "=",
-				Value:    v,
-			},
-		}
+		condition = createPrimaryKeyCondition(model, v)
 	}
 	var queryProps DatabaseQuery
 	queryProps.Table = getTableNameFromModel(s.TablePrefix, model)
@@ -238,22 +204,8 @@ func (s PostgreSQLConnector) first(ctx context.Context, model interface{}, condi
 	defer rows.Close()
 	if rows.Next() {
 		columns, _ := rows.Columns()
-		scanArgs := make([]interface{}, len(columns))
 		val := reflect.ValueOf(model).Elem()
-		for i, column := range columns {
-			if field, ok := fieldMap[column]; ok {
-				fieldVal := val.FieldByName(field)
-				if fieldVal.IsValid() && fieldVal.CanAddr() {
-					scanArgs[i] = fieldVal.Addr().Interface()
-				} else {
-					var discard interface{}
-					scanArgs[i] = &discard
-				}
-			} else {
-				var discard interface{}
-				scanArgs[i] = &discard
-			}
-		}
+		scanArgs := scanRowToModel(columns, fieldMap, val)
 		err = rows.Scan(scanArgs...)
 		if err != nil {
 			return fmt.Errorf("error scanning row: %v", err)
@@ -271,13 +223,7 @@ func (s PostgreSQLConnector) firstWithTransaction(ctx context.Context, tx *sql.T
 	case []Condition:
 		condition = v
 	default:
-		condition = []Condition{
-			{
-				Field:    DefaultIDField,
-				Operator: "=",
-				Value:    v,
-			},
-		}
+		condition = createPrimaryKeyCondition(model, v)
 	}
 	var queryProps DatabaseQuery
 	queryProps.Table = getTableNameFromModel(s.TablePrefix, model)
@@ -291,22 +237,8 @@ func (s PostgreSQLConnector) firstWithTransaction(ctx context.Context, tx *sql.T
 	defer rows.Close()
 	if rows.Next() {
 		columns, _ := rows.Columns()
-		scanArgs := make([]interface{}, len(columns))
 		val := reflect.ValueOf(model).Elem()
-		for i, column := range columns {
-			if field, ok := fieldMap[column]; ok {
-				fieldVal := val.FieldByName(field)
-				if fieldVal.IsValid() && fieldVal.CanAddr() {
-					scanArgs[i] = fieldVal.Addr().Interface()
-				} else {
-					var discard interface{}
-					scanArgs[i] = &discard
-				}
-			} else {
-				var discard interface{}
-				scanArgs[i] = &discard
-			}
-		}
+		scanArgs := scanRowToModel(columns, fieldMap, val)
 		err = rows.Scan(scanArgs...)
 		if err != nil {
 			return fmt.Errorf("error scanning row: %v", err)
@@ -341,26 +273,12 @@ func (s PostgreSQLConnector) all(ctx context.Context, models interface{}, queryP
 
 	// scan rows into "models" slice
 	for rows.Next() {
-		scanArgs := make([]interface{}, len(columns))
 		modelType := reflect.TypeOf(modelInstance)
 		if modelType.Kind() == reflect.Ptr {
 			modelType = modelType.Elem()
 		}
 		modelVal := reflect.New(modelType)
-		for i, column := range columns {
-			if field, ok := fieldMap[column]; ok {
-				fieldVal := modelVal.Elem().FieldByName(field)
-				if fieldVal.IsValid() && fieldVal.CanAddr() {
-					scanArgs[i] = fieldVal.Addr().Interface()
-				} else {
-					var discard interface{}
-					scanArgs[i] = &discard
-				}
-			} else {
-				var discard interface{}
-				scanArgs[i] = &discard
-			}
-		}
+		scanArgs := scanRowToModel(columns, fieldMap, modelVal.Elem())
 		err = rows.Scan(scanArgs...)
 		if err != nil {
 			return fmt.Errorf("error scanning row: %v", err)
@@ -396,26 +314,12 @@ func (s PostgreSQLConnector) allWithTransaction(ctx context.Context, tx *sql.Tx,
 
 	// scan rows into "models" slice
 	for rows.Next() {
-		scanArgs := make([]interface{}, len(columns))
 		modelType := reflect.TypeOf(modelInstance)
 		if modelType.Kind() == reflect.Ptr {
 			modelType = modelType.Elem()
 		}
 		modelVal := reflect.New(modelType)
-		for i, column := range columns {
-			if field, ok := fieldMap[column]; ok {
-				fieldVal := modelVal.Elem().FieldByName(field)
-				if fieldVal.IsValid() && fieldVal.CanAddr() {
-					scanArgs[i] = fieldVal.Addr().Interface()
-				} else {
-					var discard interface{}
-					scanArgs[i] = &discard
-				}
-			} else {
-				var discard interface{}
-				scanArgs[i] = &discard
-			}
-		}
+		scanArgs := scanRowToModel(columns, fieldMap, modelVal.Elem())
 		err = rows.Scan(scanArgs...)
 		if err != nil {
 			return fmt.Errorf("error scanning row: %v", err)
@@ -439,22 +343,8 @@ func (s PostgreSQLConnector) Query(ctx context.Context, model interface{}, query
 	var results []interface{}
 	columns, _ := rows.Columns()
 	for rows.Next() {
-		scanArgs := make([]interface{}, len(columns))
 		val := reflect.New(reflect.TypeOf(model).Elem())
-		for i, column := range columns {
-			if field, ok := fieldMap[column]; ok {
-				fieldVal := val.Elem().FieldByName(field)
-				if fieldVal.IsValid() && fieldVal.CanAddr() {
-					scanArgs[i] = fieldVal.Addr().Interface()
-				} else {
-					var discard interface{}
-					scanArgs[i] = &discard
-				}
-			} else {
-				var discard interface{}
-				scanArgs[i] = &discard
-			}
-		}
+		scanArgs := scanRowToModel(columns, fieldMap, val.Elem())
 		err = rows.Scan(scanArgs...)
 		if err != nil {
 			return nil, fmt.Errorf("error scanning row: %v", err)
@@ -500,14 +390,7 @@ func (s PostgreSQLConnector) deleteWithTx(ctx context.Context, tx *sql.Tx, model
 	}
 
 	// Prepare the statement
-	var stmt *sql.Stmt
-	var err error
-	if tx != nil {
-		stmt, err = tx.PrepareContext(ctx, query)
-	} else {
-		db := s.GetConnection()
-		stmt, err = db.PrepareContext(ctx, query)
-	}
+	stmt, err := prepareStatement(ctx, tx, s.GetConnection(), query)
 	if err != nil {
 		return 0, err
 	}
@@ -549,10 +432,11 @@ func (s PostgreSQLConnector) updateWithTx(ctx context.Context, tx *sql.Tx, model
 	t := val.Type()
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		if field.Tag.Get(DBColumnTag) == DefaultIDField && len(updateStmt.Conditions) == 0 {
+		if isPrimaryKeyField(field) && len(updateStmt.Conditions) == 0 {
+			pkColumnName := field.Tag.Get(DBColumnTag)
 			updateStmt.Conditions = append(updateStmt.Conditions, []Condition{
 				{
-					Field:    DefaultIDField,
+					Field:    pkColumnName,
 					Operator: "=",
 					Value:    val.Field(i).Interface(),
 				},
@@ -566,13 +450,7 @@ func (s PostgreSQLConnector) updateWithTx(ctx context.Context, tx *sql.Tx, model
 	}
 
 	// Prepare the query
-	var stmt *sql.Stmt
-	if tx != nil {
-		stmt, err = tx.PrepareContext(ctx, q)
-	} else {
-		db := s.GetConnection()
-		stmt, err = db.PrepareContext(ctx, q)
-	}
+	stmt, err := prepareStatement(ctx, tx, s.GetConnection(), q)
 	if err != nil {
 		return 0, err
 	}
@@ -631,31 +509,33 @@ func (s *PostgreSQLConnector) RollbackTx(tx *sql.Tx) error {
 	return tx.Rollback()
 }
 
-func prefixColumns(tableName string, columns []string) []string {
-	prefixedCols := make([]string, len(columns))
-	for i, col := range columns {
-		prefixedCols[i] = fmt.Sprintf("%s.%s", tableName, col)
-	}
-	return prefixedCols
-}
-
-func (s *PostgreSQLConnector) JoinWithContext(ctx context.Context, props *JoinProps) ([]map[string]interface{}, error) {
-	return s.join(ctx, props)
-}
-
 func (s *PostgreSQLConnector) join(ctx context.Context, props *JoinProps) ([]map[string]interface{}, error) {
+	// Validate join type
+	if props.JoinType == "" {
+		return nil, fmt.Errorf("join type is required")
+	}
+
 	mainTableName := getTableNameFromModel(s.TablePrefix, props.MainTableModel)
 	joinTableName := getTableNameFromModel(s.TablePrefix, props.JoinTableModel)
 
-	// Prefix columns with table names
-	mainTableCols := prefixColumns(mainTableName, props.MainTableCols)
-	joinTableCols := prefixColumns(joinTableName, props.JoinTableCols)
+	// Build column selections with aliases to preserve table context
+	var selectParts []string
 
-	// Build the SQL query
-	query := fmt.Sprintf("SELECT %s, %s FROM %s JOIN %s ON %s",
-		strings.Join(mainTableCols, ", "),
-		strings.Join(joinTableCols, ", "),
+	// Add main table columns with aliases
+	for _, col := range props.MainTableCols {
+		selectParts = append(selectParts, fmt.Sprintf("%s.%s AS \"%s.%s\"", mainTableName, col, mainTableName, col))
+	}
+
+	// Add join table columns with aliases
+	for _, col := range props.JoinTableCols {
+		selectParts = append(selectParts, fmt.Sprintf("%s.%s AS \"%s.%s\"", joinTableName, col, joinTableName, col))
+	}
+
+	// Build the SQL query with the specified join type
+	query := fmt.Sprintf("SELECT %s FROM %s %s %s ON %s",
+		strings.Join(selectParts, ", "),
 		mainTableName,
+		string(props.JoinType),
 		joinTableName,
 		props.JoinCondition,
 	)
@@ -707,7 +587,12 @@ func (s *PostgreSQLConnector) join(ctx context.Context, props *JoinProps) ([]map
 
 		// Populate the rowData map
 		for i, col := range columns {
-			rowData[col] = values[i]
+			val := values[i]
+			// Convert byte arrays (common for UUIDs) to strings
+			if byteVal, ok := val.([]byte); ok {
+				val = string(byteVal)
+			}
+			rowData[col] = val
 		}
 
 		// Append the rowData map to the results slice
@@ -762,4 +647,28 @@ func (s PostgreSQLConnector) FindAll(models interface{}, queryProps *DatabaseQue
 		return s.allWithTransaction(config.ctx, config.tx, models, queryProps)
 	}
 	return s.all(config.ctx, models, queryProps)
+}
+
+// LeftJoinWithContext performs a LEFT JOIN between two tables
+func (s *PostgreSQLConnector) LeftJoinWithContext(ctx context.Context, props *JoinProps) ([]map[string]interface{}, error) {
+	props.JoinType = LeftJoin
+	return s.join(ctx, props)
+}
+
+// RightJoinWithContext performs a RIGHT JOIN between two tables
+func (s *PostgreSQLConnector) RightJoinWithContext(ctx context.Context, props *JoinProps) ([]map[string]interface{}, error) {
+	props.JoinType = RightJoin
+	return s.join(ctx, props)
+}
+
+// FullJoinWithContext performs a FULL OUTER JOIN between two tables
+func (s *PostgreSQLConnector) FullJoinWithContext(ctx context.Context, props *JoinProps) ([]map[string]interface{}, error) {
+	props.JoinType = FullJoin
+	return s.join(ctx, props)
+}
+
+// InnerJoinWithContext performs an INNER JOIN between two tables (same as JoinWithContext)
+func (s *PostgreSQLConnector) InnerJoinWithContext(ctx context.Context, props *JoinProps) ([]map[string]interface{}, error) {
+	props.JoinType = InnerJoin
+	return s.join(ctx, props)
 }
