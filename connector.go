@@ -509,31 +509,33 @@ func (s *PostgreSQLConnector) RollbackTx(tx *sql.Tx) error {
 	return tx.Rollback()
 }
 
-func prefixColumns(tableName string, columns []string) []string {
-	prefixedCols := make([]string, len(columns))
-	for i, col := range columns {
-		prefixedCols[i] = fmt.Sprintf("%s.%s", tableName, col)
-	}
-	return prefixedCols
-}
-
-func (s *PostgreSQLConnector) JoinWithContext(ctx context.Context, props *JoinProps) ([]map[string]interface{}, error) {
-	return s.join(ctx, props)
-}
-
 func (s *PostgreSQLConnector) join(ctx context.Context, props *JoinProps) ([]map[string]interface{}, error) {
+	// Validate join type
+	if props.JoinType == "" {
+		return nil, fmt.Errorf("join type is required")
+	}
+
 	mainTableName := getTableNameFromModel(s.TablePrefix, props.MainTableModel)
 	joinTableName := getTableNameFromModel(s.TablePrefix, props.JoinTableModel)
 
-	// Prefix columns with table names
-	mainTableCols := prefixColumns(mainTableName, props.MainTableCols)
-	joinTableCols := prefixColumns(joinTableName, props.JoinTableCols)
+	// Build column selections with aliases to preserve table context
+	var selectParts []string
 
-	// Build the SQL query
-	query := fmt.Sprintf("SELECT %s, %s FROM %s JOIN %s ON %s",
-		strings.Join(mainTableCols, ", "),
-		strings.Join(joinTableCols, ", "),
+	// Add main table columns with aliases
+	for _, col := range props.MainTableCols {
+		selectParts = append(selectParts, fmt.Sprintf("%s.%s AS \"%s.%s\"", mainTableName, col, mainTableName, col))
+	}
+
+	// Add join table columns with aliases
+	for _, col := range props.JoinTableCols {
+		selectParts = append(selectParts, fmt.Sprintf("%s.%s AS \"%s.%s\"", joinTableName, col, joinTableName, col))
+	}
+
+	// Build the SQL query with the specified join type
+	query := fmt.Sprintf("SELECT %s FROM %s %s %s ON %s",
+		strings.Join(selectParts, ", "),
 		mainTableName,
+		string(props.JoinType),
 		joinTableName,
 		props.JoinCondition,
 	)
@@ -585,7 +587,12 @@ func (s *PostgreSQLConnector) join(ctx context.Context, props *JoinProps) ([]map
 
 		// Populate the rowData map
 		for i, col := range columns {
-			rowData[col] = values[i]
+			val := values[i]
+			// Convert byte arrays (common for UUIDs) to strings
+			if byteVal, ok := val.([]byte); ok {
+				val = string(byteVal)
+			}
+			rowData[col] = val
 		}
 
 		// Append the rowData map to the results slice
@@ -640,4 +647,28 @@ func (s PostgreSQLConnector) FindAll(models interface{}, queryProps *DatabaseQue
 		return s.allWithTransaction(config.ctx, config.tx, models, queryProps)
 	}
 	return s.all(config.ctx, models, queryProps)
+}
+
+// LeftJoinWithContext performs a LEFT JOIN between two tables
+func (s *PostgreSQLConnector) LeftJoinWithContext(ctx context.Context, props *JoinProps) ([]map[string]interface{}, error) {
+	props.JoinType = LeftJoin
+	return s.join(ctx, props)
+}
+
+// RightJoinWithContext performs a RIGHT JOIN between two tables
+func (s *PostgreSQLConnector) RightJoinWithContext(ctx context.Context, props *JoinProps) ([]map[string]interface{}, error) {
+	props.JoinType = RightJoin
+	return s.join(ctx, props)
+}
+
+// FullJoinWithContext performs a FULL OUTER JOIN between two tables
+func (s *PostgreSQLConnector) FullJoinWithContext(ctx context.Context, props *JoinProps) ([]map[string]interface{}, error) {
+	props.JoinType = FullJoin
+	return s.join(ctx, props)
+}
+
+// InnerJoinWithContext performs an INNER JOIN between two tables (same as JoinWithContext)
+func (s *PostgreSQLConnector) InnerJoinWithContext(ctx context.Context, props *JoinProps) ([]map[string]interface{}, error) {
+	props.JoinType = InnerJoin
+	return s.join(ctx, props)
 }
