@@ -60,21 +60,21 @@ var testCompanyId = uuid.New()
 var testPermissionId = uuid.New()
 
 type TestUser struct {
-	ID       uuid.UUID `db_column:"id"`
+	ID       uuid.UUID `db_column:"id" db_pk:""`
 	Email    string    `db_column:"email" db_unique:"yes"`
 	Name     string    `db_column:"name" db_column_length:"30"`
 	UserType int       `db_column:"user_type"`
 }
 
 type TestUserCompanyPermission struct {
-	ID        uuid.UUID `db_column:"id"`
+	ID        uuid.UUID `db_column:"id" db_pk:""`
 	UserID    uuid.UUID `db_column:"user_id" db_fk:"orm_testuser(id)" db_fk_on_delete:"cascade"`
 	CompanyID uuid.UUID `db_column:"company_id" db_fk:"orm_testcompany(id)" db_fk_on_delete:"cascade"`
 	Role      string    `db_column:"role"`
 }
 
 type TestCompany struct {
-	ID          uuid.UUID `db_column:"id"`
+	ID          uuid.UUID `db_column:"id" db_pk:""`
 	CompanyName string    `db_column:"company_name"`
 }
 
@@ -360,12 +360,14 @@ func TestSelectUsersWithSearch(t *testing.T) {
 
 func TestDeleteOne(t *testing.T) {
 	r := fakeHttpRequest()
+	testUser := &TestUser{}
+	pkField := getPrimaryKeyField(testUser)
 	condition := Condition{
-		Field:    DefaultIDField,
+		Field:    pkField,
 		Operator: "=",
 		Value:    testUserId,
 	}
-	affected, err := connector.DeleteModel(&TestUser{}, []Condition{condition}, WithContext(r.Context()))
+	affected, err := connector.DeleteModel(testUser, []Condition{condition}, WithContext(r.Context()))
 	if err != nil {
 		t.Errorf("error should be nil, but was: %s", err)
 	}

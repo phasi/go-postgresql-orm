@@ -7,7 +7,13 @@ import (
 
 const (
 	DefaultIDField     = "id"
+	DBPKTag            = "db_pk"
 	DBColumnTag        = "db_column"
+	DBUniqueTag        = "db_unique"
+	DBNullableTag      = "db_nullable"
+	DBColumnLengthTag  = "db_column_length"
+	DBFKOnDeleteTag    = "db_fk_on_delete"
+	DBFKTag            = "db_fk"
 	DefaultLimit       = 100
 	DefaultTablePrefix = "gpo_"
 )

@@ -85,7 +85,7 @@ func getColumnsAndForeignKeysFromStruct(s interface{}) ([]Column, []ForeignKey) 
 		field := t.Field(i)
 		columnName, ok := field.Tag.Lookup(DBColumnTag)
 		if ok {
-			columnLength, isSet := field.Tag.Lookup("db_column_length")
+			columnLength, isSet := field.Tag.Lookup(DBColumnLengthTag)
 			length := 0
 			if isSet {
 				var err error
@@ -95,14 +95,15 @@ func getColumnsAndForeignKeysFromStruct(s interface{}) ([]Column, []ForeignKey) 
 				}
 			}
 			columnType := convertGoTypeToPostgresType(field.Type.Name(), length)
-			_, unique := field.Tag.Lookup("db_unique")
-			_, nullable := field.Tag.Lookup("db_nullable")
-			columns = append(columns, Column{Name: columnName, Type: columnType, PrimaryKey: columnName == "id", Unique: unique, Null: nullable, Length: length})
+			_, unique := field.Tag.Lookup(DBUniqueTag)
+			_, nullable := field.Tag.Lookup(DBNullableTag)
+			isPK := isPrimaryKeyField(field)
+			columns = append(columns, Column{Name: columnName, Type: columnType, PrimaryKey: isPK, Unique: unique, Null: nullable, Length: length})
 		}
 
-		fk, ok := field.Tag.Lookup("db_fk")
+		fk, ok := field.Tag.Lookup(DBFKTag)
 		if ok {
-			onDeleteVal, onDeleteFound := field.Tag.Lookup("db_fk_on_delete")
+			onDeleteVal, onDeleteFound := field.Tag.Lookup(DBFKOnDeleteTag)
 			if onDeleteFound {
 				foreignKeys = append(foreignKeys, ForeignKey{ColumnName: columnName, References: fk, OnDelete: onDeleteVal})
 			} else {
@@ -356,7 +357,7 @@ func buildPartialUpdateStmt(params *DatabaseUpdate, model interface{}) (string, 
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		dbColumn := field.Tag.Get(DBColumnTag)
-		if dbColumn == DefaultIDField || dbColumn == "" {
+		if isPrimaryKeyField(field) || dbColumn == "" {
 			continue
 		}
 		if !fieldMap[dbColumn] {
@@ -401,7 +402,7 @@ func buildUpdateStmt(params *DatabaseUpdate, model interface{}) (string, []inter
 	args := make([]interface{}, 0)
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		if field.Tag.Get(DBColumnTag) == DefaultIDField {
+		if isPrimaryKeyField(field) {
 			continue
 		}
 		if field.Tag.Get(DBColumnTag) == "" {
@@ -480,4 +481,31 @@ func (qb *QueryBuilder) Limit(limit int) *QueryBuilder {
 // Build returns the final query string and arguments
 func (qb *QueryBuilder) Build() (string, []interface{}) {
 	return qb.query.String(), qb.args
+}
+
+// getPrimaryKeyField returns the database column name of the primary key field from a struct
+func getPrimaryKeyField(model interface{}) string {
+	val := reflect.ValueOf(model)
+	if val.Kind() == reflect.Ptr {
+		val = val.Elem()
+	}
+
+	t := val.Type()
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		// Check if this field has the primary key tag
+		if _, hasPK := field.Tag.Lookup(DBPKTag); hasPK {
+			if columnName, hasColumn := field.Tag.Lookup(DBColumnTag); hasColumn {
+				return columnName
+			}
+		}
+	}
+	// Fallback to default if no primary key tag is found
+	return DefaultIDField
+}
+
+// isPrimaryKeyField checks if a field is marked as primary key
+func isPrimaryKeyField(field reflect.StructField) bool {
+	_, hasPK := field.Tag.Lookup(DBPKTag)
+	return hasPK
 }

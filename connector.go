@@ -218,9 +218,10 @@ func (s PostgreSQLConnector) first(ctx context.Context, model interface{}, condi
 	case []Condition:
 		condition = v
 	default:
+		pkField := getPrimaryKeyField(model)
 		condition = []Condition{
 			{
-				Field:    DefaultIDField,
+				Field:    pkField,
 				Operator: "=",
 				Value:    v,
 			},
@@ -271,9 +272,10 @@ func (s PostgreSQLConnector) firstWithTransaction(ctx context.Context, tx *sql.T
 	case []Condition:
 		condition = v
 	default:
+		pkField := getPrimaryKeyField(model)
 		condition = []Condition{
 			{
-				Field:    DefaultIDField,
+				Field:    pkField,
 				Operator: "=",
 				Value:    v,
 			},
@@ -549,10 +551,11 @@ func (s PostgreSQLConnector) updateWithTx(ctx context.Context, tx *sql.Tx, model
 	t := val.Type()
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		if field.Tag.Get(DBColumnTag) == DefaultIDField && len(updateStmt.Conditions) == 0 {
+		if isPrimaryKeyField(field) && len(updateStmt.Conditions) == 0 {
+			pkColumnName := field.Tag.Get(DBColumnTag)
 			updateStmt.Conditions = append(updateStmt.Conditions, []Condition{
 				{
-					Field:    DefaultIDField,
+					Field:    pkColumnName,
 					Operator: "=",
 					Value:    val.Field(i).Interface(),
 				},
