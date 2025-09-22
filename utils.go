@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"net/http"
@@ -508,4 +509,44 @@ func getPrimaryKeyField(model interface{}) string {
 func isPrimaryKeyField(field reflect.StructField) bool {
 	_, hasPK := field.Tag.Lookup(DBPKTag)
 	return hasPK
+}
+
+// scanRowToModel creates scan arguments for a single row based on field mapping
+func scanRowToModel(columns []string, fieldMap FieldMap, modelVal reflect.Value) []interface{} {
+	scanArgs := make([]interface{}, len(columns))
+	for i, column := range columns {
+		if field, ok := fieldMap[column]; ok {
+			fieldVal := modelVal.FieldByName(field)
+			if fieldVal.IsValid() && fieldVal.CanAddr() {
+				scanArgs[i] = fieldVal.Addr().Interface()
+			} else {
+				var discard interface{}
+				scanArgs[i] = &discard
+			}
+		} else {
+			var discard interface{}
+			scanArgs[i] = &discard
+		}
+	}
+	return scanArgs
+}
+
+// prepareStatement prepares a SQL statement with optional transaction support
+func prepareStatement(ctx context.Context, tx *sql.Tx, db *sql.DB, query string) (*sql.Stmt, error) {
+	if tx != nil {
+		return tx.PrepareContext(ctx, query)
+	}
+	return db.PrepareContext(ctx, query)
+}
+
+// createPrimaryKeyCondition creates a condition for primary key lookup
+func createPrimaryKeyCondition(model interface{}, idValue interface{}) []Condition {
+	pkField := getPrimaryKeyField(model)
+	return []Condition{
+		{
+			Field:    pkField,
+			Operator: "=",
+			Value:    idValue,
+		},
+	}
 }
