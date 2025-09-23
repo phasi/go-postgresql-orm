@@ -98,17 +98,6 @@ type Post struct {
 - ✅ **Multiple constraints**: Combine `unique`, `nullable`, `length()` in any order
 - ✅ **Smart defaults**: If no `pk` field is defined, an `id UUID PRIMARY KEY` is automatically created
 
-````
-
-**Legacy Foreign Key Example (equivalent in new system):**
-```go
-// Old system
-TestModelID  uuid.UUID `db_column:"test_model_id" db_fk:"orm_testmodel(id)" db_nullable:"" db_fk_on_delete:"set null"`
-
-// New GPO system (notice no prefix needed!)
-TestModelID  uuid.UUID `gpo:"test_model_id,fk(testmodel:id,set null),nullable"`
-````
-
 ### Connecting to database
 
 You should do this only once when initializing database, the underlying sql library supports connection pooling so there is no need to initialize more than one connectors per database.
