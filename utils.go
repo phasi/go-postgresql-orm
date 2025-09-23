@@ -114,6 +114,20 @@ func getColumnsAndForeignKeysFromStruct(s interface{}) ([]Column, []ForeignKey) 
 		}
 	}
 
+	// Check if we have a primary key column defined
+	hasPrimaryKey := false
+	for _, column := range columns {
+		if column.PrimaryKey {
+			hasPrimaryKey = true
+			break
+		}
+	}
+
+	// If no primary key is defined, add the default id column
+	if !hasPrimaryKey {
+		columns = append([]Column{{Name: DefaultIDField, Type: "UUID", PrimaryKey: true, Unique: false, Null: false, Length: 0}}, columns...)
+	}
+
 	return columns, foreignKeys
 }
 
@@ -131,13 +145,10 @@ func _createTable(db *sql.DB, table Table) error {
 	}
 
 	// Start the create table statement
-	sql := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (id UUID PRIMARY KEY,", table.Name)
+	sql := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (", table.Name)
 
 	// Add columns to the table
 	for _, column := range table.Columns {
-		if column.Name == "id" {
-			continue
-		}
 		nullText := "NOT NULL"
 		if column.Null {
 			nullText = "NULL"
@@ -146,7 +157,11 @@ func _createTable(db *sql.DB, table Table) error {
 		if column.Unique {
 			uniqueText = "UNIQUE"
 		}
-		sql += fmt.Sprintf("%s %s %s %s,", column.Name, column.Type, nullText, uniqueText)
+		pkText := ""
+		if column.PrimaryKey {
+			pkText = "PRIMARY KEY"
+		}
+		sql += fmt.Sprintf("%s %s %s %s %s,", column.Name, column.Type, nullText, uniqueText, pkText)
 	}
 
 	// Add foreign keys
@@ -171,6 +186,7 @@ func _createTable(db *sql.DB, table Table) error {
 
 	// Remove trailing comma and close parentheses
 	sql = strings.TrimSuffix(sql, ",") + ")"
+
 	// Execute the create table statement
 	_, err := db.Exec(sql)
 	if err != nil {
