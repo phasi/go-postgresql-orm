@@ -325,10 +325,11 @@ conditions := []Condition{
 
 ### Join Operations
 
-Perform complex queries with joins:
+Perform complex queries with joins, e.g.:
 
 ```go
 
+// This is an example "user" representation in the database
 type User struct {
 	ID          uuid.UUID `gpo:"id,pk"`                          // Primary key
 	Email       string    `gpo:"email,unique"`                   // Unique email
@@ -336,13 +337,7 @@ type User struct {
 	Description string    `gpo:"description,nullable"`           // Nullable field
 	Age         int       `gpo:"age"`                           // Regular integer field
 }
-
-type UserProfile struct {
-	ID     uuid.UUID `gpo:"id,pk"`                             // Primary key
-	UserID uuid.UUID `gpo:"user_id,fk(user:id,cascade)"`      // Foreign key with cascade delete
-	Bio    string    `gpo:"bio,length(500),nullable"`          // Multiple options
-}
-
+// This is an example "post" representation in the database
 type Post struct {
 	ID       uuid.UUID `gpo:"id,pk"`                           // Primary key
 	AuthorID uuid.UUID `gpo:"author_id,fk(user:id,set null)"` // FK with SET NULL on delete
@@ -352,8 +347,9 @@ type Post struct {
 }
 
 
-// This struct does not exist in database but we'll create it to hold the joined data
+// This struct does not exist in database but we'll use it to hold the joined data
 // we could use any name in `gpo:"<column_name>"` and then use gpo.JoinResult.ColumnMappings to map the actual database table.column to it.
+// Other option is to use the same name as it has in its database table.column but then we would have to make sure 2 tables don't have overlapping column names.
 	type PostWithAuthor struct {
 		ID          uuid.UUID `gpo:"post_id"`
 		AuthorID    string    `gpo:"author_id"`
@@ -363,11 +359,14 @@ type Post struct {
 		Slug        string    `gpo:"slug"`
 	}
 
+// collect results here
 	var results []PostWithAuthor
 
+ // prefix tables
 	postsTable := fmt.Sprintf("%spost", connector.TablePrefix)
 	usersTable := fmt.Sprintf("%suser", connector.TablePrefix)
 
+// The actual join operation (other types of joins also available)
 	err := connector.InnerJoinIntoStruct(context.Background(), &gpo.JoinResult{
 		ResultModel:    &results,
 		MainTableModel: &Post{},
