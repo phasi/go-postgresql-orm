@@ -328,24 +328,45 @@ conditions := []Condition{
 Perform complex queries with joins:
 
 ```go
-type DatabaseJoin struct {
-    Table         string // Table to join
-    LocalColumn   string // Local table column
-    ForeignColumn string // Foreign table column
-    JoinType      string // JOIN type (INNER, LEFT, RIGHT, FULL)
-}
 
-// Example: Join users with their orders
-query := &DatabaseQuery{
-    Joins: []DatabaseJoin{
-        {
-            Table:         "orm_orders",
-            LocalColumn:   "id",
-            ForeignColumn: "user_id",
-            JoinType:      "LEFT",
-        },
-    },
-}
+	type PostWithAuthor struct {
+		ID          uuid.UUID `gpo:"post_id"`
+		AuthorID    string    `gpo:"author_id"`
+		AuthorEmail string    `gpo:"author_email"`
+		Title       string    `gpo:"title"`
+		Content     string    `gpo:"content"`
+		Slug        string    `gpo:"slug"`
+	}
+
+	var results []PostWithAuthor
+
+	postsTable := fmt.Sprintf("%spost", connector.TablePrefix)
+	usersTable := fmt.Sprintf("%suser", connector.TablePrefix)
+
+	err := connector.InnerJoinIntoStruct(context.Background(), &gpo.JoinResult{
+		ResultModel:    &results,
+		MainTableModel: &Post{},
+		JoinTableModel: &User{},
+		JoinCondition:  fmt.Sprintf("%s.author_id = %s.id", postsTable, usersTable),
+		ColumnMappings: map[string]string{
+			fmt.Sprintf("%s.id", postsTable):      "post_id",
+			fmt.Sprintf("%s.id", usersTable):      "author_id",
+			fmt.Sprintf("%s.email", usersTable):   "author_email",
+			fmt.Sprintf("%s.title", postsTable):   "title",
+			fmt.Sprintf("%s.content", postsTable): "content",
+			fmt.Sprintf("%s.slug", postsTable):    "slug",
+		},
+	})
+
+	if err != nil {
+		panic(fmt.Sprintf("Error performing join: %v", err))
+	}
+
+	for _, post := range results {
+		fmt.Printf("Post ID: %s, Author ID: %s, Author Email: %s, Title: %s, Content: %s, Slug: %s\n",
+			post.ID, post.AuthorID, post.AuthorEmail, post.Title, post.Content, post.Slug)
+	}
+
 ```
 
 ### Custom Queries
