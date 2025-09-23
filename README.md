@@ -2,6 +2,30 @@
 
 go-postgresql-orm is a simple postgresql capable ORM library.
 
+## Installation
+
+### Prerequisites
+
+- Go 1.16 or later
+- PostgreSQL database server
+
+### Install the library
+
+```bash
+go get github.com/lib/pq
+go get github.com/phasi/go-postgresql-orm
+```
+
+### Import in your Go project
+
+```go
+import (
+    "github.com/google/uuid"
+    _ "github.com/lib/pq"
+    gpo "github.com/phasi/go-postgresql-orm"
+)
+```
+
 ## Getting started
 
 ### Initializing SQLConnector
