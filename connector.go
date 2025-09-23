@@ -602,9 +602,7 @@ func (s *PostgreSQLConnector) join(ctx context.Context, props *JoinProps) ([]map
 	return results, nil
 }
 
-// Simplified methods using options pattern
-
-// InsertModel is a simplified insert method that accepts optional context and transaction
+// InsertModel inserts a model into the database, accepting optional context and transaction
 func (s PostgreSQLConnector) InsertModel(model interface{}, opts ...Option) error {
 	config := processOptions(opts)
 	if config.tx != nil {
@@ -613,7 +611,7 @@ func (s PostgreSQLConnector) InsertModel(model interface{}, opts ...Option) erro
 	return s.insert(config.ctx, model)
 }
 
-// DeleteModel is a simplified delete method that accepts optional context and transaction
+// DeleteModel deletes a model from the database, accepting optional context and transaction
 func (s PostgreSQLConnector) DeleteModel(model interface{}, conditions []Condition, opts ...Option) (int64, error) {
 	config := processOptions(opts)
 	if config.tx != nil {
@@ -622,7 +620,7 @@ func (s PostgreSQLConnector) DeleteModel(model interface{}, conditions []Conditi
 	return s.delete(config.ctx, model, conditions...)
 }
 
-// UpdateModel is a simplified update method that accepts optional context and transaction
+// UpdateModel updates a model in the database, accepting optional context and transaction
 func (s PostgreSQLConnector) UpdateModel(model interface{}, conditions interface{}, opts ...Option) (int64, error) {
 	config := processOptions(opts)
 	if config.tx != nil {
@@ -631,7 +629,7 @@ func (s PostgreSQLConnector) UpdateModel(model interface{}, conditions interface
 	return s.update(config.ctx, model, conditions)
 }
 
-// FindFirst is a simplified method to find the first record matching conditions
+// FindFirst finds the first record matching the condition or primary key, accepting optional context and transaction
 func (s PostgreSQLConnector) FindFirst(model interface{}, conditionOrId interface{}, opts ...Option) error {
 	config := processOptions(opts)
 	if config.tx != nil {
@@ -640,7 +638,7 @@ func (s PostgreSQLConnector) FindFirst(model interface{}, conditionOrId interfac
 	return s.first(config.ctx, model, conditionOrId)
 }
 
-// FindAll is a simplified method to find all records matching the query
+// FindAll finds all records matching the query properties, accepting optional context and transaction
 func (s PostgreSQLConnector) FindAll(models interface{}, queryProps *DatabaseQuery, opts ...Option) error {
 	config := processOptions(opts)
 	if config.tx != nil {
@@ -667,7 +665,7 @@ func (s *PostgreSQLConnector) FullJoinWithContext(ctx context.Context, props *Jo
 	return s.join(ctx, props)
 }
 
-// InnerJoinWithContext performs an INNER JOIN between two tables (same as JoinWithContext)
+// InnerJoinWithContext performs an INNER JOIN between two tables
 func (s *PostgreSQLConnector) InnerJoinWithContext(ctx context.Context, props *JoinProps) ([]map[string]interface{}, error) {
 	props.JoinType = InnerJoin
 	return s.join(ctx, props)
