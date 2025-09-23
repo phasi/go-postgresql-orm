@@ -329,6 +329,31 @@ Perform complex queries with joins:
 
 ```go
 
+type User struct {
+	ID          uuid.UUID `gpo:"id,pk"`                          // Primary key
+	Email       string    `gpo:"email,unique"`                   // Unique email
+	Name        string    `gpo:"name,length(50)"`               // Max 50 characters
+	Description string    `gpo:"description,nullable"`           // Nullable field
+	Age         int       `gpo:"age"`                           // Regular integer field
+}
+
+type UserProfile struct {
+	ID     uuid.UUID `gpo:"id,pk"`                             // Primary key
+	UserID uuid.UUID `gpo:"user_id,fk(user:id,cascade)"`      // Foreign key with cascade delete
+	Bio    string    `gpo:"bio,length(500),nullable"`          // Multiple options
+}
+
+type Post struct {
+	ID       uuid.UUID `gpo:"id,pk"`                           // Primary key
+	AuthorID uuid.UUID `gpo:"author_id,fk(user:id,set null)"` // FK with SET NULL on delete
+	Title    string    `gpo:"title,length(200)"`               // Required title
+	Content  string    `gpo:"content"`                         // TEXT field (no length limit)
+	Slug     string    `gpo:"slug,unique,length(100)"`         // Unique slug with length limit
+}
+
+
+// This struct does not exist in database but we'll create it to hold the joined data
+// we could use any name in `gpo:"<column_name>"` and then use gpo.JoinResult.ColumnMappings to map the actual database table.column to it.
 	type PostWithAuthor struct {
 		ID          uuid.UUID `gpo:"post_id"`
 		AuthorID    string    `gpo:"author_id"`
