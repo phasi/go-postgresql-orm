@@ -18,12 +18,70 @@ func parseTags(model interface{}, fields *Fields) FieldMap {
 	fieldMap := make(FieldMap)
 	for i := 0; i < val.NumField(); i++ {
 		typeField := val.Type().Field(i)
-		if tag, ok := typeField.Tag.Lookup(DBColumnTag); ok {
-			*fields = append(*fields, tag)
-			fieldMap[tag] = typeField.Name
+		if gpoField := parseGPOTag(typeField); gpoField != nil {
+			*fields = append(*fields, gpoField.ColumnName)
+			fieldMap[gpoField.ColumnName] = typeField.Name
 		}
 	}
 	return fieldMap
+}
+
+// parseGPOTag parses the gpo tag and returns GPOField information
+func parseGPOTag(field reflect.StructField) *GPOField {
+	tag, ok := field.Tag.Lookup(GPOTag)
+	if !ok {
+		return nil
+	}
+
+	parts := strings.Split(tag, ",")
+	if len(parts) == 0 {
+		return nil
+	}
+
+	gpoField := &GPOField{
+		ColumnName: strings.TrimSpace(parts[0]),
+	}
+
+	// Parse options
+	for i := 1; i < len(parts); i++ {
+		option := strings.TrimSpace(parts[i])
+
+		if option == "pk" {
+			gpoField.IsPrimaryKey = true
+		} else if option == "unique" {
+			gpoField.IsUnique = true
+		} else if option == "nullable" {
+			gpoField.IsNullable = true
+		} else if strings.HasPrefix(option, "length(") && strings.HasSuffix(option, ")") {
+			// Parse length(50)
+			lengthStr := option[7 : len(option)-1] // Remove "length(" and ")"
+			if length, err := strconv.Atoi(lengthStr); err == nil {
+				gpoField.Length = length
+			}
+		} else if strings.HasPrefix(option, "fk(") && strings.HasSuffix(option, ")") {
+			// Parse fk(table:column) or fk(table:column,cascade)
+			fkContent := option[3 : len(option)-1] // Remove "fk(" and ")"
+			fkParts := strings.Split(fkContent, ",")
+
+			if len(fkParts) >= 1 {
+				// Parse table:column
+				tableColumn := strings.TrimSpace(fkParts[0])
+				if colonIdx := strings.Index(tableColumn, ":"); colonIdx != -1 {
+					gpoField.ForeignKey = &ForeignKeyInfo{
+						Table:  strings.TrimSpace(tableColumn[:colonIdx]),
+						Column: strings.TrimSpace(tableColumn[colonIdx+1:]),
+					}
+
+					// Parse onDelete option if present
+					if len(fkParts) >= 2 {
+						gpoField.ForeignKey.OnDelete = strings.TrimSpace(fkParts[1])
+					}
+				}
+			}
+		}
+	}
+
+	return gpoField
 }
 
 func convertGoTypeToPostgresType(goType string, length int) string {
@@ -72,6 +130,10 @@ func convertGoTypeToPostgresType(goType string, length int) string {
 }
 
 func getColumnsAndForeignKeysFromStruct(s interface{}) ([]Column, []ForeignKey) {
+	return getColumnsAndForeignKeysFromStructWithPrefix(s, DefaultTablePrefix)
+}
+
+func getColumnsAndForeignKeysFromStructWithPrefix(s interface{}, tablePrefix string) ([]Column, []ForeignKey) {
 	t := reflect.TypeOf(s)
 
 	// If the type is a pointer, get the element type
@@ -84,32 +146,36 @@ func getColumnsAndForeignKeysFromStruct(s interface{}) ([]Column, []ForeignKey) 
 
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		columnName, ok := field.Tag.Lookup(DBColumnTag)
-		if ok {
-			columnLength, isSet := field.Tag.Lookup(DBColumnLengthTag)
-			length := 0
-			if isSet {
-				var err error
-				length, err = strconv.Atoi(columnLength)
-				if err != nil {
-					// Use default length of 0 if conversion fails
-					length = 0
-				}
-			}
-			columnType := convertGoTypeToPostgresType(field.Type.Name(), length)
-			_, unique := field.Tag.Lookup(DBUniqueTag)
-			_, nullable := field.Tag.Lookup(DBNullableTag)
-			isPK := isPrimaryKeyField(field)
-			columns = append(columns, Column{Name: columnName, Type: columnType, PrimaryKey: isPK, Unique: unique, Null: nullable, Length: length})
-		}
+		gpoField := parseGPOTag(field)
 
-		fk, ok := field.Tag.Lookup(DBFKTag)
-		if ok {
-			onDeleteVal, onDeleteFound := field.Tag.Lookup(DBFKOnDeleteTag)
-			if onDeleteFound {
-				foreignKeys = append(foreignKeys, ForeignKey{ColumnName: columnName, References: fk, OnDelete: onDeleteVal})
-			} else {
-				foreignKeys = append(foreignKeys, ForeignKey{ColumnName: columnName, References: fk})
+		if gpoField != nil {
+			columnType := convertGoTypeToPostgresType(field.Type.Name(), gpoField.Length)
+
+			columns = append(columns, Column{
+				Name:       gpoField.ColumnName,
+				Type:       columnType,
+				PrimaryKey: gpoField.IsPrimaryKey,
+				Unique:     gpoField.IsUnique,
+				Null:       gpoField.IsNullable,
+				Length:     gpoField.Length,
+			})
+
+			// Handle foreign key
+			if gpoField.ForeignKey != nil {
+				// Add table prefix to the foreign key reference
+				referencedTable := tablePrefix + gpoField.ForeignKey.Table
+				references := fmt.Sprintf("%s(%s)", referencedTable, gpoField.ForeignKey.Column)
+
+				foreignKey := ForeignKey{
+					ColumnName: gpoField.ColumnName,
+					References: references,
+				}
+
+				if gpoField.ForeignKey.OnDelete != "" {
+					foreignKey.OnDelete = gpoField.ForeignKey.OnDelete
+				}
+
+				foreignKeys = append(foreignKeys, foreignKey)
 			}
 		}
 	}
@@ -340,7 +406,7 @@ func buildInsertStmt(params *DatabaseInsert, model interface{}) (string, []inter
 		var structFieldName string
 		for j := 0; j < t.NumField(); j++ {
 			field := t.Field(j)
-			if field.Tag.Get(DBColumnTag) == dbColumnName {
+			if gpoField := parseGPOTag(field); gpoField != nil && gpoField.ColumnName == dbColumnName {
 				structFieldName = field.Name
 				break
 			}
@@ -374,14 +440,14 @@ func buildPartialUpdateStmt(params *DatabaseUpdate, model interface{}) (string, 
 	}
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		dbColumn := field.Tag.Get(DBColumnTag)
-		if isPrimaryKeyField(field) || dbColumn == "" {
+		gpoField := parseGPOTag(field)
+		if gpoField == nil || gpoField.IsPrimaryKey {
 			continue
 		}
-		if !fieldMap[dbColumn] {
+		if !fieldMap[gpoField.ColumnName] {
 			continue
 		}
-		query += fmt.Sprintf("%s = $%d, ", dbColumn, len(args)+1)
+		query += fmt.Sprintf("%s = $%d, ", gpoField.ColumnName, len(args)+1)
 		args = append(args, val.Field(i).Interface())
 	}
 	query = strings.TrimSuffix(query, ", ")
@@ -420,13 +486,11 @@ func buildUpdateStmt(params *DatabaseUpdate, model interface{}) (string, []inter
 	args := make([]interface{}, 0)
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		if isPrimaryKeyField(field) {
+		gpoField := parseGPOTag(field)
+		if gpoField == nil || gpoField.IsPrimaryKey {
 			continue
 		}
-		if field.Tag.Get(DBColumnTag) == "" {
-			return "", nil, fmt.Errorf("no %s tag found for field %s", DBColumnTag, field.Name)
-		}
-		query += fmt.Sprintf("%s = $%d, ", field.Tag.Get(DBColumnTag), len(args)+1)
+		query += fmt.Sprintf("%s = $%d, ", gpoField.ColumnName, len(args)+1)
 		args = append(args, val.Field(i).Interface())
 	}
 	query = strings.TrimSuffix(query, ", ")
@@ -512,10 +576,8 @@ func getPrimaryKeyField(model interface{}) string {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		// Check if this field has the primary key tag
-		if _, hasPK := field.Tag.Lookup(DBPKTag); hasPK {
-			if columnName, hasColumn := field.Tag.Lookup(DBColumnTag); hasColumn {
-				return columnName
-			}
+		if gpoField := parseGPOTag(field); gpoField != nil && gpoField.IsPrimaryKey {
+			return gpoField.ColumnName
 		}
 	}
 	// Fallback to default if no primary key tag is found
@@ -524,8 +586,8 @@ func getPrimaryKeyField(model interface{}) string {
 
 // isPrimaryKeyField checks if a field is marked as primary key
 func isPrimaryKeyField(field reflect.StructField) bool {
-	_, hasPK := field.Tag.Lookup(DBPKTag)
-	return hasPK
+	gpoField := parseGPOTag(field)
+	return gpoField != nil && gpoField.IsPrimaryKey
 }
 
 // scanRowToModel creates scan arguments for a single row based on field mapping

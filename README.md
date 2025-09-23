@@ -20,38 +20,70 @@ var connector PostgreSQLConnector = PostgreSQLConnector{
 
 ### Preparing your models for database
 
-You can tag your models' properties as per below example. It affects how the tables are configured upon creation.
+You can tag your models' properties using the unified `gpo` tag system. It affects how the tables are configured upon creation.
 
-#### Supported tags
+#### GPO Tag System
 
-You can tag primary key by defining `db_pk`. The primary key column doesn't have to be named "id" but if no `db_pk` is present then `db_column:"id"` is used as a fallback.
+The `gpo` tag uses a comma-separated format: `gpo:"column_name,option1,option2,..."` where the first part is always the column name, followed by optional modifiers.
 
-| Tag name         | Description                                          |
-| ---------------- | ---------------------------------------------------- |
-| db_pk            | Marks a field as the primary key                     |
-| db_column        | Name of the column in database                       |
-| db_column_length | Max length of the column                             |
-| db_nullable      | Presence of this tag makes the column nullable       |
-| db_unique        | Presence of this tag makes the column unique         |
-| db_fk            | Foreign key to another table and field (see example) |
-| db_fk_on_delete  | action when the relation is deleted e.g. "SET NULL"  |
+| Option                 | Description                                     | Example                             |
+| ---------------------- | ----------------------------------------------- | ----------------------------------- |
+| `pk`                   | Marks a field as the primary key                | `gpo:"id,pk"`                       |
+| `unique`               | Makes the column unique                         | `gpo:"email,unique"`                |
+| `nullable`             | Makes the column nullable (default is NOT NULL) | `gpo:"description,nullable"`        |
+| `length(n)`            | Sets maximum length for string columns          | `gpo:"name,length(50)"`             |
+| `fk(table:col)`        | Foreign key to another table and column         | `gpo:"user_id,fk(user:id)"`         |
+| `fk(table:col,action)` | Foreign key with ON DELETE action               | `gpo:"user_id,fk(user:id,cascade)"` |
+
+**Foreign Key Notes:**
+
+- Table names in foreign keys should NOT include the table prefix
+- The ORM automatically adds the configured table prefix
+- Supported ON DELETE actions: `cascade`, `set null`, `restrict`, `no action`, `set default`
 
 _Example:_
 
 ```go
-type TestModel struct {
-	ID          uuid.UUID `db_column:"id" db_pk:""`                    // Primary key (can be any column name)
-	StringValue string    `db_column:"string_value" db_column_length:"10"`
-	IntValue    int       `db_column:"int_value"`
-	UniqueValue string    `db_column:"unique_value" db_unique:""`
+type User struct {
+	ID          uuid.UUID `gpo:"id,pk"`                          // Primary key
+	Email       string    `gpo:"email,unique"`                   // Unique email
+	Name        string    `gpo:"name,length(50)"`               // Max 50 characters
+	Description string    `gpo:"description,nullable"`           // Nullable field
+	Age         int       `gpo:"age"`                           // Regular integer field
 }
 
-type TestRelatedModel struct {
-	MyPrimaryKey uuid.UUID `db_column:"my_pk" db_pk:""`              // Custom primary key name
-	TestModelID  uuid.UUID `db_column:"test_model_id" db_fk:"orm_testmodel(id)" db_nullable:"" db_fk_on_delete:"set null"`
-	StringValue  string    `db_column:"string_value"`
+type UserProfile struct {
+	ID     uuid.UUID `gpo:"id,pk"`                             // Primary key
+	UserID uuid.UUID `gpo:"user_id,fk(user:id,cascade)"`      // Foreign key with cascade delete
+	Bio    string    `gpo:"bio,length(500),nullable"`          // Multiple options
+}
+
+type Post struct {
+	ID       uuid.UUID `gpo:"id,pk"`                           // Primary key
+	AuthorID uuid.UUID `gpo:"author_id,fk(user:id,set null)"` // FK with SET NULL on delete
+	Title    string    `gpo:"title,length(200)"`               // Required title
+	Content  string    `gpo:"content"`                         // TEXT field (no length limit)
+	Slug     string    `gpo:"slug,unique,length(100)"`         // Unique slug with length limit
 }
 ```
+
+**Key Features:**
+
+- ✅ **Custom primary keys**: Any field can be the primary key with `pk` option
+- ✅ **Automatic table prefixes**: Foreign keys automatically get the configured table prefix
+- ✅ **Multiple constraints**: Combine `unique`, `nullable`, `length()` in any order
+- ✅ **Smart defaults**: If no `pk` field is defined, an `id UUID PRIMARY KEY` is automatically created
+
+````
+
+**Legacy Foreign Key Example (equivalent in new system):**
+```go
+// Old system
+TestModelID  uuid.UUID `db_column:"test_model_id" db_fk:"orm_testmodel(id)" db_nullable:"" db_fk_on_delete:"set null"`
+
+// New GPO system (notice no prefix needed!)
+TestModelID  uuid.UUID `gpo:"test_model_id,fk(testmodel:id,set null),nullable"`
+````
 
 ### Connecting to database
 
@@ -405,8 +437,9 @@ The library defines useful constants:
 ```go
 const (
     DefaultIDField     = "id"           // Default primary key field name
-    DBColumnTag        = "db_column"    // Struct tag for column mapping
-    DefaultTablePrefix = ""             // Default table prefix
+    GPOTag             = "gpo"          // Unified struct tag for all field mappings
+    DefaultTablePrefix = "gpo_"         // Default table prefix
+    DefaultLimit       = 100            // Default query limit
 )
 ```
 

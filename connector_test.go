@@ -60,22 +60,22 @@ var testCompanyId = uuid.New()
 var testPermissionId = uuid.New()
 
 type TestUser struct {
-	ID       uuid.UUID `db_column:"id" db_pk:""`
-	Email    string    `db_column:"email" db_unique:"yes"`
-	Name     string    `db_column:"name" db_column_length:"30"`
-	UserType int       `db_column:"user_type"`
+	ID       uuid.UUID `gpo:"id,pk"`
+	Email    string    `gpo:"email,unique"`
+	Name     string    `gpo:"name,length(30)"`
+	UserType int       `gpo:"user_type"`
 }
 
 type TestUserCompanyPermission struct {
-	ID        uuid.UUID `db_column:"id" db_pk:""`
-	UserID    uuid.UUID `db_column:"user_id" db_fk:"orm_testuser(id)" db_fk_on_delete:"cascade"`
-	CompanyID uuid.UUID `db_column:"company_id" db_fk:"orm_testcompany(id)" db_fk_on_delete:"cascade"`
-	Role      string    `db_column:"role"`
+	ID        uuid.UUID `gpo:"id,pk"`
+	UserID    uuid.UUID `gpo:"user_id,fk(testuser:id,cascade)"`
+	CompanyID uuid.UUID `gpo:"company_id,fk(testcompany:id,cascade)"`
+	Role      string    `gpo:"role"`
 }
 
 type TestCompany struct {
-	ID          uuid.UUID `db_column:"id" db_pk:""`
-	CompanyName string    `db_column:"company_name"`
+	ID          uuid.UUID `gpo:"id,pk"`
+	CompanyName string    `gpo:"company_name"`
 }
 
 var TABLES = []interface{}{

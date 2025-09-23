@@ -84,7 +84,7 @@ func (s *PostgreSQLConnector) CreateDatabase(dbName string) error {
 // CreateTable creates a single table in the database for the given model
 func (s *PostgreSQLConnector) CreateTable(model interface{}) error {
 	tableName := getTableNameFromModel(s.TablePrefix, model)
-	columns, foreignKeys := getColumnsAndForeignKeysFromStruct(model)
+	columns, foreignKeys := getColumnsAndForeignKeysFromStructWithPrefix(model, s.TablePrefix)
 	table := Table{Name: tableName, Columns: columns, ForeignKeys: foreignKeys}
 	db := s.GetConnection()
 	return _createTable(db, table)
@@ -433,14 +433,16 @@ func (s PostgreSQLConnector) updateWithTx(ctx context.Context, tx *sql.Tx, model
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		if isPrimaryKeyField(field) && len(updateStmt.Conditions) == 0 {
-			pkColumnName := field.Tag.Get(DBColumnTag)
-			updateStmt.Conditions = append(updateStmt.Conditions, []Condition{
-				{
-					Field:    pkColumnName,
-					Operator: "=",
-					Value:    val.Field(i).Interface(),
-				},
-			}...)
+			gpoField := parseGPOTag(field)
+			if gpoField != nil {
+				updateStmt.Conditions = append(updateStmt.Conditions, []Condition{
+					{
+						Field:    gpoField.ColumnName,
+						Operator: "=",
+						Value:    val.Field(i).Interface(),
+					},
+				}...)
+			}
 			break
 		}
 	}

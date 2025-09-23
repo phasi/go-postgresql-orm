@@ -7,16 +7,27 @@ import (
 
 const (
 	DefaultIDField     = "id"
-	DBPKTag            = "db_pk"
-	DBColumnTag        = "db_column"
-	DBUniqueTag        = "db_unique"
-	DBNullableTag      = "db_nullable"
-	DBColumnLengthTag  = "db_column_length"
-	DBFKOnDeleteTag    = "db_fk_on_delete"
-	DBFKTag            = "db_fk"
+	GPOTag             = "gpo"
 	DefaultLimit       = 100
 	DefaultTablePrefix = "gpo_"
 )
+
+// GPOField represents parsed field information from a gpo tag
+type GPOField struct {
+	ColumnName   string
+	IsPrimaryKey bool
+	IsUnique     bool
+	IsNullable   bool
+	Length       int
+	ForeignKey   *ForeignKeyInfo
+}
+
+// ForeignKeyInfo represents foreign key relationship information
+type ForeignKeyInfo struct {
+	Table    string
+	Column   string
+	OnDelete string
+}
 
 // Option represents a configuration option for database operations
 type Option func(*Config)
