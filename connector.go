@@ -602,6 +602,122 @@ func (s *PostgreSQLConnector) join(ctx context.Context, props *JoinProps) ([]map
 	return results, nil
 }
 
+// joinIntoStruct performs a join operation and scans results into a struct slice
+func (s *PostgreSQLConnector) joinIntoStruct(ctx context.Context, props *JoinResult) error {
+	// Validate join type
+	if props.JoinType == "" {
+		return fmt.Errorf("join type is required")
+	}
+
+	// Ensure ResultModel is a pointer to a slice
+	val := reflect.ValueOf(props.ResultModel)
+	if val.Kind() != reflect.Ptr || val.Elem().Kind() != reflect.Slice {
+		return fmt.Errorf("ResultModel must be a pointer to a slice")
+	}
+
+	// Extract element type from slice
+	sliceType := val.Elem().Type()
+	elementType := sliceType.Elem()
+
+	// Create a new instance of the element type to extract field information
+	modelInstance := reflect.New(elementType).Interface()
+
+	mainTableName := getTableNameFromModel(s.TablePrefix, props.MainTableModel)
+	joinTableName := getTableNameFromModel(s.TablePrefix, props.JoinTableModel)
+
+	// Parse tags from the result model to get field mapping
+	var fields Fields
+	fieldMap := parseTags(modelInstance, &fields)
+
+	// Build column selections based on struct tags and custom mappings
+	var selectParts []string
+
+	if props.ColumnMappings != nil && len(props.ColumnMappings) > 0 {
+		// Use explicit column mappings
+		for tableColumn, structTag := range props.ColumnMappings {
+			selectParts = append(selectParts, fmt.Sprintf("%s AS %s", tableColumn, structTag))
+		}
+	} else {
+		// Auto-build from struct fields and table models
+		var mainFields, joinFields Fields
+		parseTags(props.MainTableModel, &mainFields)
+		parseTags(props.JoinTableModel, &joinFields)
+
+		// For each field in the result struct, try to map it to a table column
+		for _, field := range fields {
+			// Check if this field exists in main table
+			if contains(mainFields, field) {
+				selectParts = append(selectParts, fmt.Sprintf("%s.%s", mainTableName, field))
+			} else if contains(joinFields, field) {
+				selectParts = append(selectParts, fmt.Sprintf("%s.%s", joinTableName, field))
+			}
+		}
+	}
+
+	// Build the SQL query with the specified join type
+	query := fmt.Sprintf("SELECT %s FROM %s %s %s ON %s",
+		strings.Join(selectParts, ", "),
+		mainTableName,
+		string(props.JoinType),
+		joinTableName,
+		props.JoinCondition,
+	)
+
+	var args []interface{}
+	if len(props.WhereConditions) > 0 {
+		query += " WHERE "
+		for i, condition := range props.WhereConditions {
+			if i > 0 {
+				query += " AND "
+			}
+			query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, i+1)
+			args = append(args, condition.Value)
+		}
+	}
+
+	db := s.GetConnection()
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("error executing join query: %v", err)
+	}
+	defer rows.Close()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return fmt.Errorf("error getting columns: %v", err)
+	}
+
+	// Scan rows into struct slice
+	for rows.Next() {
+		// Create a new instance of the element type
+		newElement := reflect.New(elementType)
+		elementVal := newElement.Elem()
+
+		// Prepare scan arguments
+		scanArgs := scanRowToModel(columns, fieldMap, elementVal)
+
+		// Scan the row into the struct
+		if err := rows.Scan(scanArgs...); err != nil {
+			return fmt.Errorf("error scanning row: %v", err)
+		}
+
+		// Append the new element to the slice
+		val.Elem().Set(reflect.Append(val.Elem(), elementVal))
+	}
+
+	return nil
+}
+
+// Helper function to check if a slice contains a string
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
 // InsertModel inserts a model into the database, accepting optional context and transaction
 func (s PostgreSQLConnector) InsertModel(model interface{}, opts ...Option) error {
 	config := processOptions(opts)
@@ -669,4 +785,28 @@ func (s *PostgreSQLConnector) FullJoinWithContext(ctx context.Context, props *Jo
 func (s *PostgreSQLConnector) InnerJoinWithContext(ctx context.Context, props *JoinProps) ([]map[string]interface{}, error) {
 	props.JoinType = InnerJoin
 	return s.join(ctx, props)
+}
+
+// LeftJoinIntoStruct performs a LEFT JOIN and scans results into a struct slice
+func (s *PostgreSQLConnector) LeftJoinIntoStruct(ctx context.Context, props *JoinResult) error {
+	props.JoinType = LeftJoin
+	return s.joinIntoStruct(ctx, props)
+}
+
+// RightJoinIntoStruct performs a RIGHT JOIN and scans results into a struct slice
+func (s *PostgreSQLConnector) RightJoinIntoStruct(ctx context.Context, props *JoinResult) error {
+	props.JoinType = RightJoin
+	return s.joinIntoStruct(ctx, props)
+}
+
+// FullJoinIntoStruct performs a FULL OUTER JOIN and scans results into a struct slice
+func (s *PostgreSQLConnector) FullJoinIntoStruct(ctx context.Context, props *JoinResult) error {
+	props.JoinType = FullJoin
+	return s.joinIntoStruct(ctx, props)
+}
+
+// InnerJoinIntoStruct performs an INNER JOIN and scans results into a struct slice
+func (s *PostgreSQLConnector) InnerJoinIntoStruct(ctx context.Context, props *JoinResult) error {
+	props.JoinType = InnerJoin
+	return s.joinIntoStruct(ctx, props)
 }

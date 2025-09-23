@@ -144,3 +144,15 @@ type JoinProps struct {
 	WhereConditions []Condition
 	JoinType        JoinType // Required field - no default
 }
+
+// JoinResult represents the result of a join operation that can be scanned into structs
+type JoinResult struct {
+	ResultModel     interface{} // The struct to scan results into (should be a slice pointer)
+	MainTableModel  interface{}
+	JoinTableModel  interface{}
+	JoinCondition   string
+	WhereConditions []Condition
+	JoinType        JoinType // Required field - no default
+	// ColumnMappings maps database columns to struct field names for complex joins
+	ColumnMappings map[string]string // Optional: "table.column" -> "struct_field_db_tag"
+}
