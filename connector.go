@@ -177,7 +177,7 @@ func (s PostgreSQLConnector) CustomQuery(ctx context.Context, transactionOrNil *
 	return rows, nil
 }
 
-func (s PostgreSQLConnector) first(ctx context.Context, model interface{}, conditionOrId interface{}) error {
+func (s PostgreSQLConnector) first(ctx context.Context, tx *sql.Tx, model interface{}, conditionOrId interface{}) error {
 	if conditionOrId == nil {
 		return fmt.Errorf("conditionOrId cannot be nil")
 	}
@@ -193,7 +193,7 @@ func (s PostgreSQLConnector) first(ctx context.Context, model interface{}, condi
 	queryProps.Conditions = condition
 	queryProps.Limit = 1
 	fieldMap := parseTags(model, &queryProps.fields)
-	rows, err := s.doQuery(ctx, &queryProps)
+	rows, err := s.executeQuery(ctx, tx, &queryProps)
 	if err != nil {
 		return fmt.Errorf("error querying database: %v", err)
 	}
@@ -210,40 +210,7 @@ func (s PostgreSQLConnector) first(ctx context.Context, model interface{}, condi
 	return nil
 }
 
-func (s PostgreSQLConnector) firstWithTransaction(ctx context.Context, tx *sql.Tx, model interface{}, conditionOrId interface{}) error {
-	if conditionOrId == nil {
-		return fmt.Errorf("conditionOrId cannot be nil")
-	}
-	var condition []Condition
-	switch v := conditionOrId.(type) {
-	case []Condition:
-		condition = v
-	default:
-		condition = createPrimaryKeyCondition(model, v)
-	}
-	var queryProps DatabaseQuery
-	queryProps.Table = getTableNameFromModel(s.TablePrefix, model)
-	queryProps.Conditions = condition
-	queryProps.Limit = 1
-	fieldMap := parseTags(model, &queryProps.fields)
-	rows, err := s.doQueryInTransaction(ctx, tx, &queryProps)
-	if err != nil {
-		return fmt.Errorf("error querying database: %v", err)
-	}
-	defer rows.Close()
-	if rows.Next() {
-		columns, _ := rows.Columns()
-		val := reflect.ValueOf(model).Elem()
-		scanArgs := scanRowToModel(columns, fieldMap, val)
-		err = rows.Scan(scanArgs...)
-		if err != nil {
-			return fmt.Errorf("error scanning row: %v", err)
-		}
-	}
-	return nil
-}
-
-func (s PostgreSQLConnector) all(ctx context.Context, models interface{}, queryProps *DatabaseQuery) error {
+func (s PostgreSQLConnector) all(ctx context.Context, tx *sql.Tx, models interface{}, queryProps *DatabaseQuery) error {
 	// Ensure models is a pointer to a slice
 	val := reflect.ValueOf(models)
 	if val.Kind() != reflect.Ptr || val.Elem().Kind() != reflect.Slice {
@@ -260,48 +227,7 @@ func (s PostgreSQLConnector) all(ctx context.Context, models interface{}, queryP
 		queryProps.Table = getTableNameFromModel(s.TablePrefix, modelInstance)
 	}
 	fieldMap := parseTags(modelInstance, &queryProps.fields)
-	rows, err := s.doQuery(ctx, queryProps)
-	if err != nil {
-		return fmt.Errorf("error querying database: %v", err)
-	}
-	defer rows.Close()
-	columns, _ := rows.Columns()
-
-	// scan rows into "models" slice
-	for rows.Next() {
-		modelType := reflect.TypeOf(modelInstance)
-		if modelType.Kind() == reflect.Ptr {
-			modelType = modelType.Elem()
-		}
-		modelVal := reflect.New(modelType)
-		scanArgs := scanRowToModel(columns, fieldMap, modelVal.Elem())
-		err = rows.Scan(scanArgs...)
-		if err != nil {
-			return fmt.Errorf("error scanning row: %v", err)
-		}
-		val.Elem().Set(reflect.Append(val.Elem(), modelVal.Elem()))
-	}
-	return nil
-}
-
-func (s PostgreSQLConnector) allWithTransaction(ctx context.Context, tx *sql.Tx, models interface{}, queryProps *DatabaseQuery) error {
-	// Ensure models is a pointer to a slice
-	val := reflect.ValueOf(models)
-	if val.Kind() != reflect.Ptr || val.Elem().Kind() != reflect.Slice {
-		return fmt.Errorf("error handling %s: models must be a pointer to a slice", val.Type())
-	}
-
-	// Extract model type from slice
-	sliceType := val.Elem().Type()
-	elementType := sliceType.Elem()
-	// Create a new instance of the element type
-	modelInstance := reflect.New(elementType).Interface()
-
-	if queryProps.Table == "" {
-		queryProps.Table = getTableNameFromModel(s.TablePrefix, modelInstance)
-	}
-	fieldMap := parseTags(modelInstance, &queryProps.fields)
-	rows, err := s.doQueryInTransaction(ctx, tx, queryProps)
+	rows, err := s.executeQuery(ctx, tx, queryProps)
 	if err != nil {
 		return fmt.Errorf("error querying database: %v", err)
 	}
@@ -330,7 +256,7 @@ func (s PostgreSQLConnector) Query(ctx context.Context, model interface{}, query
 		queryProps.Table = getTableNameFromModel(s.TablePrefix, model)
 	}
 	fieldMap := parseTags(model, &queryProps.fields)
-	rows, err := s.doQuery(ctx, queryProps)
+	rows, err := s.executeQuery(ctx, nil, queryProps)
 	if err != nil {
 		return nil, fmt.Errorf("error querying database: %v", err)
 	}
@@ -443,7 +369,8 @@ func (s PostgreSQLConnector) updateWithTx(ctx context.Context, tx *sql.Tx, model
 	return result.RowsAffected()
 }
 
-func (s PostgreSQLConnector) doQuery(ctx context.Context, queryProps *DatabaseQuery) (rows *sql.Rows, err error) {
+// executeQuery executes a query with optional transaction support
+func (s *PostgreSQLConnector) executeQuery(ctx context.Context, tx *sql.Tx, queryProps *DatabaseQuery) (rows *sql.Rows, err error) {
 	var q string
 	var args []interface{}
 	if queryProps.AllowPagination || queryProps.AllowSearch {
@@ -451,29 +378,13 @@ func (s PostgreSQLConnector) doQuery(ctx context.Context, queryProps *DatabaseQu
 	} else {
 		q, args = buildQuery(queryProps)
 	}
-	db := s.GetConnection()
-	// Perform a query
-	rows, err = db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	return rows, nil
-}
 
-func (s *PostgreSQLConnector) doQueryInTransaction(ctx context.Context, tx *sql.Tx, queryProps *DatabaseQuery) (rows *sql.Rows, err error) {
-	var q string
-	var args []interface{}
-	if queryProps.AllowPagination || queryProps.AllowSearch {
-		q, args = buildAdvancedQuery(queryProps)
-	} else {
-		q, args = buildQuery(queryProps)
+	if tx != nil {
+		return tx.QueryContext(ctx, q, args...)
 	}
-	// Perform a query
-	rows, err = tx.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	return rows, nil
+
+	db := s.GetConnection()
+	return db.QueryContext(ctx, q, args...)
 }
 
 func (s *PostgreSQLConnector) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
@@ -718,19 +629,13 @@ func (s PostgreSQLConnector) UpdateModel(model interface{}, conditions interface
 // FindFirst finds the first record matching the condition or primary key, accepting optional context and transaction
 func (s PostgreSQLConnector) FindFirst(model interface{}, conditionOrId interface{}, opts ...Option) error {
 	config := processOptions(opts)
-	if config.tx != nil {
-		return s.firstWithTransaction(config.ctx, config.tx, model, conditionOrId)
-	}
-	return s.first(config.ctx, model, conditionOrId)
+	return s.first(config.ctx, config.tx, model, conditionOrId)
 }
 
 // FindAll finds all records matching the query properties, accepting optional context and transaction
 func (s PostgreSQLConnector) FindAll(models interface{}, queryProps *DatabaseQuery, opts ...Option) error {
 	config := processOptions(opts)
-	if config.tx != nil {
-		return s.allWithTransaction(config.ctx, config.tx, models, queryProps)
-	}
-	return s.all(config.ctx, models, queryProps)
+	return s.all(config.ctx, config.tx, models, queryProps)
 }
 
 // LeftJoinWithContext performs a LEFT JOIN between two tables
