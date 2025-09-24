@@ -377,6 +377,19 @@ func (s PostgreSQLConnector) deleteWithTx(ctx context.Context, tx *sql.Tx, model
 			}
 			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
 				query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, i+1)
+			} else if condition.Operator == "IN" || condition.Operator == "NOT IN" {
+				// Expecting condition.Value to be a slice
+				slice, ok := condition.Value.([]interface{})
+				if !ok || len(slice) == 0 {
+					return 0, fmt.Errorf("value for IN/NOT IN must be a non-empty slice")
+				}
+				placeholders := make([]string, len(slice))
+				for j := range slice {
+					placeholders[j] = fmt.Sprintf("$%d", i+1+j)
+				}
+				query += fmt.Sprintf("%s %s (%s)", condition.Field, condition.Operator, strings.Join(placeholders, ", "))
+				args = append(args, slice...)
+
 			} else {
 				switch condition.Value.(type) {
 				case int, int32, int64, float32, float64:

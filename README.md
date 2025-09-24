@@ -197,7 +197,7 @@ condition := Condition{
     Operator: "=",
     Value:    "user@example.com",
 }
-err := connector.FindFirst(m, condition)
+err := connector.FindFirst(m, []Condition{condition})
 
 // With context
 err := connector.FindFirst(m, id, WithContext(ctx))
