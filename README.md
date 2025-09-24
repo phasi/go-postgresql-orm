@@ -133,8 +133,9 @@ _Example:_
 ```go
 
 var TABLES = []interface{}{
-	&TestModel{},
-	&TestRelatedModel{},
+	&User{},
+	&UserProfile{},
+	&Post{},
 }
 
 err := connector.CreateTables(TABLES...)
@@ -161,11 +162,12 @@ Insert a single record into the database.
 
 ```go
 // Basic insert
-err := connector.InsertModel(&TestModel{
+err := connector.InsertModel(&User{
     ID:          uuid.New(),
-    StringValue: "test",
-    IntValue:    10,
-    UniqueValue: "thisisunique",
+    Email:       "user@example.com",
+    Name:        "John Doe",
+    Description: "A sample user",
+    Age:         30,
 })
 
 // With context
@@ -182,18 +184,18 @@ err := connector.InsertModel(&model, WithContext(ctx), WithTransaction(tx))
 
 ### Find First Record
 
-Select a single record by ID or condition. The library automatically detects the primary key field using the `db_pk` tag.
+Select a single record by ID or condition. The library automatically detects the primary key field using the `pk` option in the `gpo` tag.
 
 ```go
-// Find by ID (automatically uses the field marked with db_pk tag)
-m := &TestModel{}
-err := connector.FindFirst(m, "4d701cf7-e218-4499-8092-7c085118e373")
+// Find by ID (automatically uses the field marked with pk tag)
+user := &User{}
+err := connector.FindFirst(user, "4d701cf7-e218-4499-8092-7c085118e373")
 
 // Find by condition
 condition := Condition{
-    Field:    "string_value",
+    Field:    "email",
     Operator: "=",
-    Value:    "test",
+    Value:    "user@example.com",
 }
 err := connector.FindFirst(m, condition)
 
@@ -206,41 +208,41 @@ err := connector.FindFirst(m, id, WithContext(ctx))
 Select multiple records with advanced querying capabilities.
 
 ```go
-var models []TestModel
+var users []User
 
 // Basic query - get all records
-err := connector.FindAll(&models, &DatabaseQuery{})
+err := connector.FindAll(&users, &DatabaseQuery{})
 
 // With conditions
 query := &DatabaseQuery{
     Conditions: []Condition{
-        {Field: "int_value", Operator: ">=", Value: 5},
-        {Field: "string_value", Operator: "LIKE", Value: "%test%"},
+        {Field: "age", Operator: ">=", Value: 18},
+        {Field: "name", Operator: "LIKE", Value: "%John%"},
     },
 }
-err := connector.FindAll(&models, query)
+err := connector.FindAll(&users, query)
 
 // With pagination
 query = &DatabaseQuery{
     Limit:  10,
     Offset: 20,
 }
-err := connector.FindAll(&models, query)
+err := connector.FindAll(&users, query)
 
 // With ordering
 query = &DatabaseQuery{
-    OrderBy:    "string_value",
+    OrderBy:    "name",
     Descending: true,
 }
-err := connector.FindAll(&models, query)
+err := connector.FindAll(&users, query)
 
 // With search functionality
 query = &DatabaseQuery{
     AllowSearch:  true,
-    SearchFields: []string{"string_value", "unique_value"},
+    SearchFields: []string{"name", "email"},
     SearchTerm:   "search text",
 }
-err := connector.FindAll(&models, query)
+err := connector.FindAll(&users, query)
 
 // With joins
 query = &DatabaseQuery{
@@ -258,20 +260,21 @@ err := connector.FindAll(&models, query)
 
 ### Update Records
 
-Update records with optional conditions. When no conditions are provided, the library automatically uses the primary key field (marked with `db_pk` tag) for the WHERE clause.
+Update records with optional conditions. When no conditions are provided, the library automatically uses the primary key field (marked with `pk` option in the `gpo` tag) for the WHERE clause.
 
 ```go
-// Update by primary key (automatically detects the field marked with db_pk tag)
-model := &TestModel{
+// Update by primary key (automatically detects the field marked with pk tag)
+user := &User{
     ID:          existingID,
-    StringValue: "updated value",
-    IntValue:    20,
+    Email:       "updated@example.com",
+    Name:        "Updated Name",
+    Age:         25,
 }
-affected, err := connector.UpdateModel(model, nil)
+affected, err := connector.UpdateModel(user, nil)
 
 // Update with specific conditions
 conditions := []Condition{
-    {Field: "string_value", Operator: "=", Value: "old value"},
+    {Field: "name", Operator: "=", Value: "Old Name"},
 }
 affected, err := connector.UpdateModel(model, conditions)
 
@@ -286,15 +289,15 @@ Delete records with conditions.
 ```go
 // Delete by conditions
 conditions := []Condition{
-    {Field: "string_value", Operator: "=", Value: "to_delete"},
+    {Field: "email", Operator: "=", Value: "delete@example.com"},
 }
-affected, err := connector.DeleteModel(&TestModel{}, conditions)
+affected, err := connector.DeleteModel(&User{}, conditions)
 
 // Delete all records (empty conditions)
-affected, err := connector.DeleteModel(&TestModel{}, []Condition{})
+affected, err := connector.DeleteModel(&User{}, []Condition{})
 
 // With context
-affected, err := connector.DeleteModel(&TestModel{}, conditions, WithContext(ctx))
+affected, err := connector.DeleteModel(&User{}, conditions, WithContext(ctx))
 ```
 
 ## Advanced Features
