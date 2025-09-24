@@ -131,10 +131,6 @@ func (s *PostgreSQLConnector) DropTables(modelsOrTableNames ...interface{}) erro
 	return nil
 }
 
-func (s PostgreSQLConnector) insert(ctx context.Context, model interface{}) (err error) {
-	return s.insertWithTx(ctx, nil, model)
-}
-
 func (s PostgreSQLConnector) insertWithTx(ctx context.Context, tx *sql.Tx, model interface{}) (err error) {
 	insertStmt := DatabaseInsert{
 		Table: getTableNameFromModel(s.TablePrefix, model),
@@ -354,10 +350,6 @@ func (s PostgreSQLConnector) Query(ctx context.Context, model interface{}, query
 	return results, nil
 }
 
-func (s PostgreSQLConnector) delete(ctx context.Context, model interface{}, condition ...Condition) (int64, error) {
-	return s.deleteWithTx(ctx, nil, model, condition...)
-}
-
 func (s PostgreSQLConnector) deleteWithTx(ctx context.Context, tx *sql.Tx, model interface{}, condition ...Condition) (int64, error) {
 	deleteStmt := DatabaseDelete{
 		Table:      getTableNameFromModel(s.TablePrefix, model),
@@ -395,10 +387,6 @@ func (s PostgreSQLConnector) deleteWithTx(ctx context.Context, tx *sql.Tx, model
 		return 0, err
 	}
 	return affectedRows, nil
-}
-
-func (s PostgreSQLConnector) update(ctx context.Context, model interface{}, conditionsOrNil interface{}) (int64, error) {
-	return s.updateWithTx(ctx, nil, model, conditionsOrNil)
 }
 
 func (s PostgreSQLConnector) updateWithTx(ctx context.Context, tx *sql.Tx, model interface{}, conditionsOrNil interface{}) (int64, error) {
@@ -712,28 +700,19 @@ func contains(slice []string, item string) bool {
 // InsertModel inserts a model into the database, accepting optional context and transaction
 func (s PostgreSQLConnector) InsertModel(model interface{}, opts ...Option) error {
 	config := processOptions(opts)
-	if config.tx != nil {
-		return s.insertWithTx(config.ctx, config.tx, model)
-	}
-	return s.insert(config.ctx, model)
+	return s.insertWithTx(config.ctx, config.tx, model)
 }
 
 // DeleteModel deletes a model from the database, accepting optional context and transaction
 func (s PostgreSQLConnector) DeleteModel(model interface{}, conditions []Condition, opts ...Option) (int64, error) {
 	config := processOptions(opts)
-	if config.tx != nil {
-		return s.deleteWithTx(config.ctx, config.tx, model, conditions...)
-	}
-	return s.delete(config.ctx, model, conditions...)
+	return s.deleteWithTx(config.ctx, config.tx, model, conditions...)
 }
 
 // UpdateModel updates a model in the database, accepting optional context and transaction
 func (s PostgreSQLConnector) UpdateModel(model interface{}, conditions interface{}, opts ...Option) (int64, error) {
 	config := processOptions(opts)
-	if config.tx != nil {
-		return s.updateWithTx(config.ctx, config.tx, model, conditions)
-	}
-	return s.update(config.ctx, model, conditions)
+	return s.updateWithTx(config.ctx, config.tx, model, conditions)
 }
 
 // FindFirst finds the first record matching the condition or primary key, accepting optional context and transaction
