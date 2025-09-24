@@ -129,10 +129,6 @@ func convertGoTypeToPostgresType(goType string, length int) string {
 	}
 }
 
-func getColumnsAndForeignKeysFromStruct(s interface{}) ([]Column, []ForeignKey) {
-	return getColumnsAndForeignKeysFromStructWithPrefix(s, DefaultTablePrefix)
-}
-
 func getColumnsAndForeignKeysFromStructWithPrefix(s interface{}, tablePrefix string) ([]Column, []ForeignKey) {
 	t := reflect.TypeOf(s)
 
@@ -277,42 +273,30 @@ func getTableNameFromModel(tablePrefix string, model interface{}) string {
 }
 
 func buildQuery(params *DatabaseQuery) (string, []interface{}) {
-	var query string
-	args := make([]interface{}, 0)
-	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.fields.String(), ","), params.Table)
-	if len(params.Conditions) > 0 {
-		query += " WHERE "
-		for i, condition := range params.Conditions {
-			if i > 0 {
-				query += " AND "
-			}
-			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
-				query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
-				args = append(args, "%"+condition.Value.(string)+"%")
-			} else {
-				switch v := condition.Value.(type) {
-				case int, int32, int64, float32, float64:
-					query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
-					args = append(args, v)
-				default:
-					query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
-					args = append(args, condition.Value)
-				}
-			}
-		}
+	// Use QueryBuilder for consistent query building
+	qb := NewQueryBuilder()
+	qb.Select(params.fields.String()...).From(params.Table)
+
+	// Add conditions
+	for _, condition := range params.Conditions {
+		qb.Where(condition.Field, condition.Operator, condition.Value)
 	}
+
+	// Add ordering
 	if params.OrderBy != "" {
-		query += fmt.Sprintf(" ORDER BY %s", params.OrderBy)
 		if params.Descending {
-			query += " DESC"
+			qb.OrderByDesc(params.OrderBy)
 		} else {
-			query += " ASC"
+			qb.OrderByAsc(params.OrderBy)
 		}
 	}
+
+	// Add limit
 	if params.Limit > 0 {
-		query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
-		args = append(args, params.Limit)
+		qb.Limit(params.Limit)
 	}
+
+	query, args, _ := qb.Build()
 	return query, args
 }
 
@@ -339,56 +323,42 @@ func ParseQueryParamsFromRequest(r *http.Request, query *DatabaseQuery) {
 }
 
 func buildAdvancedQuery(params *DatabaseQuery) (string, []interface{}) {
-	var query string
-	args := make([]interface{}, 0)
-	query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(params.fields.String(), ","), params.Table)
-	if len(params.Conditions) > 0 || len(params.SearchFields) > 0 {
-		query += " WHERE "
-		for i, condition := range params.Conditions {
-			if i > 0 {
-				query += " AND "
-			}
-			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
-				query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
-				args = append(args, "%"+condition.Value.(string)+"%")
-			} else {
-				switch v := condition.Value.(type) {
-				case int, int32, int64, float32, float64:
-					query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
-					args = append(args, v)
-				default:
-					query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
-					args = append(args, condition.Value)
-				}
-			}
-		}
-		for i, field := range params.SearchFields {
-			if len(params.Conditions) > 0 || i > 0 {
-				query += " OR "
-			}
-			query += fmt.Sprintf("%s LIKE $%d", field, len(args)+1)
-			args = append(args, "%"+params.SearchText+"%")
-		}
+	// Use QueryBuilder for consistent query building with search
+	qb := NewQueryBuilder()
+	qb.Select(params.fields.String()...).From(params.Table)
+
+	// Add conditions
+	for _, condition := range params.Conditions {
+		qb.Where(condition.Field, condition.Operator, condition.Value)
 	}
-	ob := params.OrderBy
-	if ob != "" {
-		query += fmt.Sprintf(" ORDER BY %s", ob)
+
+	// Add search functionality
+	if len(params.SearchFields) > 0 && params.SearchText != "" {
+		qb.Search(params.SearchFields.String(), params.SearchText)
+	}
+
+	// Add ordering
+	if params.OrderBy != "" {
 		if params.Descending {
-			query += " DESC"
+			qb.OrderByDesc(params.OrderBy)
 		} else {
-			query += " ASC"
+			qb.OrderByAsc(params.OrderBy)
 		}
 	}
+
+	// Add limit (default to 10 if not specified)
 	if params.Limit > 0 {
-		query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
-		args = append(args, params.Limit)
+		qb.Limit(params.Limit)
 	} else {
-		query += " LIMIT 10"
+		qb.Limit(10)
 	}
+
+	// Add offset
 	if params.Offset > 0 {
-		query += fmt.Sprintf(" OFFSET $%d", len(args)+1)
-		args = append(args, params.Offset)
+		qb.Offset(params.Offset)
 	}
+
+	query, args, _ := qb.Build()
 	return query, args
 }
 
@@ -425,56 +395,6 @@ func buildInsertStmt(params *DatabaseInsert, model interface{}) (string, []inter
 	return query, vals, nil
 }
 
-func buildPartialUpdateStmt(params *DatabaseUpdate, model interface{}) (string, []interface{}, error) {
-	var query string
-	query = fmt.Sprintf("UPDATE %s SET ", params.Table)
-	val := reflect.ValueOf(model)
-	if val.Kind() == reflect.Ptr {
-		val = val.Elem()
-	}
-	t := val.Type()
-	args := make([]interface{}, 0)
-	fieldMap := make(map[string]bool)
-	for _, field := range params.Fields {
-		fieldMap[field] = true
-	}
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		gpoField := parseGPOTag(field)
-		if gpoField == nil || gpoField.IsPrimaryKey {
-			continue
-		}
-		if !fieldMap[gpoField.ColumnName] {
-			continue
-		}
-		query += fmt.Sprintf("%s = $%d, ", gpoField.ColumnName, len(args)+1)
-		args = append(args, val.Field(i).Interface())
-	}
-	query = strings.TrimSuffix(query, ", ")
-	if len(params.Conditions) > 0 {
-		query += " WHERE "
-		for i, condition := range params.Conditions {
-			if i > 0 {
-				query += " AND "
-			}
-			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
-				query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
-				args = append(args, "%"+condition.Value.(string)+"%")
-			} else {
-				switch v := condition.Value.(type) {
-				case int, int32, int64, float32, float64:
-					query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
-					args = append(args, v)
-				default:
-					query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
-					args = append(args, condition.Value)
-				}
-			}
-		}
-	}
-	return query, args, nil
-}
-
 func buildUpdateStmt(params *DatabaseUpdate, model interface{}) (string, []interface{}, error) {
 	var query string
 	query = fmt.Sprintf("UPDATE %s SET ", params.Table)
@@ -494,75 +414,446 @@ func buildUpdateStmt(params *DatabaseUpdate, model interface{}) (string, []inter
 		args = append(args, val.Field(i).Interface())
 	}
 	query = strings.TrimSuffix(query, ", ")
+
+	// Use centralized condition building
 	if len(params.Conditions) > 0 {
-		query += " WHERE "
-		for i, condition := range params.Conditions {
-			if i > 0 {
-				query += " AND "
-			}
-			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
-				query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
-				args = append(args, "%"+condition.Value.(string)+"%")
-			} else {
-				switch v := condition.Value.(type) {
-				case int, int32, int64, float32, float64:
-					query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
-					args = append(args, v)
-				default:
-					query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1)
-					args = append(args, condition.Value)
-				}
-			}
+		whereClause, whereArgs := buildConditions(params.Conditions, args)
+		if whereClause != "" {
+			query += " WHERE " + whereClause
+			args = whereArgs
 		}
 	}
 	return query, args, nil
 }
 
-// QueryBuilder provides a fluent interface for building SQL queries
+// buildConditions builds WHERE conditions from a slice of Condition structs with centralized IN/NOT IN handling
+func buildConditions(conditions []Condition, existingArgs []interface{}) (string, []interface{}) {
+	if len(conditions) == 0 {
+		return "", existingArgs
+	}
+
+	var conditionParts []string
+	args := existingArgs
+
+	for _, condition := range conditions {
+		if condition.Operator == "IN" || condition.Operator == "NOT IN" {
+			// Handle IN/NOT IN with reflection for any slice type
+			v := reflect.ValueOf(condition.Value)
+			if v.Kind() == reflect.Slice {
+				placeholders := make([]string, v.Len())
+				for i := 0; i < v.Len(); i++ {
+					placeholders[i] = fmt.Sprintf("$%d", len(args)+1)
+					args = append(args, v.Index(i).Interface())
+				}
+				conditionParts = append(conditionParts, fmt.Sprintf("%s %s (%s)",
+					condition.Field, condition.Operator, strings.Join(placeholders, ",")))
+			} else {
+				// Single value, treat as equals
+				conditionParts = append(conditionParts, fmt.Sprintf("%s = $%d", condition.Field, len(args)+1))
+				args = append(args, condition.Value)
+			}
+		} else if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
+			conditionParts = append(conditionParts, fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1))
+			args = append(args, "%"+condition.Value.(string)+"%")
+		} else {
+			conditionParts = append(conditionParts, fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, len(args)+1))
+			args = append(args, condition.Value)
+		}
+	}
+
+	return strings.Join(conditionParts, " AND "), args
+}
+
+// buildConditionsWithSearch builds WHERE conditions including search functionality
+func buildConditionsWithSearch(conditions []Condition, searchFields []string, searchText string, existingArgs []interface{}) (string, []interface{}) {
+	var whereParts []string
+	args := existingArgs
+
+	// Add regular conditions
+	if len(conditions) > 0 {
+		whereClause, whereArgs := buildConditions(conditions, args)
+		if whereClause != "" {
+			whereParts = append(whereParts, whereClause)
+			args = whereArgs
+		}
+	}
+
+	// Add search conditions
+	if len(searchFields) > 0 && searchText != "" {
+		var searchParts []string
+		for _, field := range searchFields {
+			searchParts = append(searchParts, fmt.Sprintf("%s LIKE $%d", field, len(args)+1))
+			args = append(args, "%"+searchText+"%")
+		}
+		if len(searchParts) > 0 {
+			whereParts = append(whereParts, "("+strings.Join(searchParts, " OR ")+")")
+		}
+	}
+
+	if len(whereParts) == 0 {
+		return "", args
+	}
+
+	return strings.Join(whereParts, " AND "), args
+}
+
+// QueryBuilder provides a fluent interface for building ALL SQL queries
 type QueryBuilder struct {
-	query    strings.Builder
-	args     []interface{}
-	argIndex int
+	queryType    string
+	table        string
+	fields       []string
+	joins        []string
+	conditions   []Condition
+	orderBy      []string
+	groupBy      []string
+	having       []string
+	limit        int
+	offset       int
+	values       map[string]interface{}
+	updateModel  interface{}
+	insertModel  interface{}
+	searchText   string
+	searchFields []string
 }
 
 // NewQueryBuilder creates a new QueryBuilder instance
 func NewQueryBuilder() *QueryBuilder {
-	return &QueryBuilder{argIndex: 1}
+	return &QueryBuilder{
+		fields:     []string{},
+		joins:      []string{},
+		conditions: []Condition{},
+		orderBy:    []string{},
+		groupBy:    []string{},
+		having:     []string{},
+		values:     make(map[string]interface{}),
+	}
 }
 
-// Where adds a WHERE condition to the query
-func (qb *QueryBuilder) Where(field, operator string, value interface{}) *QueryBuilder {
-	if qb.argIndex == 1 {
-		qb.query.WriteString(" WHERE ")
+// SELECT operations
+func (qb *QueryBuilder) Select(fields ...string) *QueryBuilder {
+	qb.queryType = "SELECT"
+	if len(fields) == 0 {
+		qb.fields = []string{"*"}
 	} else {
-		qb.query.WriteString(" AND ")
-	}
-	qb.query.WriteString(fmt.Sprintf("%s %s $%d", field, operator, qb.argIndex))
-	qb.args = append(qb.args, value)
-	qb.argIndex++
-	return qb
-}
-
-// OrderBy adds an ORDER BY clause to the query
-func (qb *QueryBuilder) OrderBy(field string, descending bool) *QueryBuilder {
-	qb.query.WriteString(fmt.Sprintf(" ORDER BY %s", field))
-	if descending {
-		qb.query.WriteString(" DESC")
+		qb.fields = fields
 	}
 	return qb
 }
 
-// Limit adds a LIMIT clause to the query
+func (qb *QueryBuilder) From(table string) *QueryBuilder {
+	qb.table = table
+	return qb
+}
+
+// JOIN operations
+func (qb *QueryBuilder) Join(table, condition string) *QueryBuilder {
+	qb.joins = append(qb.joins, fmt.Sprintf("JOIN %s ON %s", table, condition))
+	return qb
+}
+
+func (qb *QueryBuilder) LeftJoin(table, condition string) *QueryBuilder {
+	qb.joins = append(qb.joins, fmt.Sprintf("LEFT JOIN %s ON %s", table, condition))
+	return qb
+}
+
+func (qb *QueryBuilder) RightJoin(table, condition string) *QueryBuilder {
+	qb.joins = append(qb.joins, fmt.Sprintf("RIGHT JOIN %s ON %s", table, condition))
+	return qb
+}
+
+func (qb *QueryBuilder) FullJoin(table, condition string) *QueryBuilder {
+	qb.joins = append(qb.joins, fmt.Sprintf("FULL OUTER JOIN %s ON %s", table, condition))
+	return qb
+}
+
+// WHERE conditions using centralized buildConditions
+func (qb *QueryBuilder) Where(field, operator string, value interface{}) *QueryBuilder {
+	qb.conditions = append(qb.conditions, Condition{
+		Field:    field,
+		Operator: operator,
+		Value:    value,
+	})
+	return qb
+}
+
+func (qb *QueryBuilder) WhereIn(field string, values interface{}) *QueryBuilder {
+	qb.conditions = append(qb.conditions, Condition{
+		Field:    field,
+		Operator: "IN",
+		Value:    values,
+	})
+	return qb
+}
+
+func (qb *QueryBuilder) WhereNotIn(field string, values interface{}) *QueryBuilder {
+	qb.conditions = append(qb.conditions, Condition{
+		Field:    field,
+		Operator: "NOT IN",
+		Value:    values,
+	})
+	return qb
+}
+
+func (qb *QueryBuilder) WhereLike(field string, value string) *QueryBuilder {
+	qb.conditions = append(qb.conditions, Condition{
+		Field:    field,
+		Operator: "LIKE",
+		Value:    value,
+	})
+	return qb
+}
+
+// Search functionality
+func (qb *QueryBuilder) Search(fields []string, text string) *QueryBuilder {
+	qb.searchFields = fields
+	qb.searchText = text
+	return qb
+}
+
+// ORDER BY
+func (qb *QueryBuilder) OrderBy(field, direction string) *QueryBuilder {
+	qb.orderBy = append(qb.orderBy, fmt.Sprintf("%s %s", field, strings.ToUpper(direction)))
+	return qb
+}
+
+func (qb *QueryBuilder) OrderByAsc(field string) *QueryBuilder {
+	return qb.OrderBy(field, "ASC")
+}
+
+func (qb *QueryBuilder) OrderByDesc(field string) *QueryBuilder {
+	return qb.OrderBy(field, "DESC")
+}
+
+// GROUP BY and HAVING
+func (qb *QueryBuilder) GroupBy(fields ...string) *QueryBuilder {
+	qb.groupBy = append(qb.groupBy, fields...)
+	return qb
+}
+
+func (qb *QueryBuilder) Having(condition string) *QueryBuilder {
+	qb.having = append(qb.having, condition)
+	return qb
+}
+
+// LIMIT and OFFSET
 func (qb *QueryBuilder) Limit(limit int) *QueryBuilder {
-	if limit > 0 {
-		qb.query.WriteString(fmt.Sprintf(" LIMIT %d", limit))
-	}
+	qb.limit = limit
 	return qb
 }
 
-// Build returns the final query string and arguments
-func (qb *QueryBuilder) Build() (string, []interface{}) {
-	return qb.query.String(), qb.args
+func (qb *QueryBuilder) Offset(offset int) *QueryBuilder {
+	qb.offset = offset
+	return qb
+}
+
+// INSERT operations
+func (qb *QueryBuilder) Insert(model interface{}) *QueryBuilder {
+	qb.queryType = "INSERT"
+	qb.insertModel = model
+	return qb
+}
+
+func (qb *QueryBuilder) Into(table string) *QueryBuilder {
+	qb.table = table
+	return qb
+}
+
+func (qb *QueryBuilder) Values(values map[string]interface{}) *QueryBuilder {
+	qb.values = values
+	return qb
+}
+
+// UPDATE operations
+func (qb *QueryBuilder) Update(table string) *QueryBuilder {
+	qb.queryType = "UPDATE"
+	qb.table = table
+	return qb
+}
+
+func (qb *QueryBuilder) Set(field string, value interface{}) *QueryBuilder {
+	if qb.values == nil {
+		qb.values = make(map[string]interface{})
+	}
+	qb.values[field] = value
+	return qb
+}
+
+func (qb *QueryBuilder) SetModel(model interface{}) *QueryBuilder {
+	qb.updateModel = model
+	return qb
+}
+
+// DELETE operations
+func (qb *QueryBuilder) Delete() *QueryBuilder {
+	qb.queryType = "DELETE"
+	return qb
+}
+
+func (qb *QueryBuilder) DeleteFrom(table string) *QueryBuilder {
+	qb.queryType = "DELETE"
+	qb.table = table
+	return qb
+}
+
+// Build the final SQL query using existing centralized functions
+func (qb *QueryBuilder) Build() (string, []interface{}, error) {
+	switch qb.queryType {
+	case "SELECT":
+		return qb.buildSelect()
+	case "INSERT":
+		return qb.buildInsert()
+	case "UPDATE":
+		return qb.buildUpdate()
+	case "DELETE":
+		return qb.buildDelete()
+	default:
+		return "", nil, fmt.Errorf("unsupported query type: %s", qb.queryType)
+	}
+}
+
+func (qb *QueryBuilder) buildSelect() (string, []interface{}, error) {
+	if qb.table == "" {
+		return "", nil, fmt.Errorf("table name is required for SELECT")
+	}
+
+	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(qb.fields, ", "), qb.table)
+
+	// Add JOINs
+	for _, join := range qb.joins {
+		query += " " + join
+	}
+
+	// Add WHERE conditions using centralized function
+	var args []interface{}
+	if len(qb.conditions) > 0 || len(qb.searchFields) > 0 {
+		whereClause, whereArgs := buildConditionsWithSearch(qb.conditions, qb.searchFields, qb.searchText, args)
+		if whereClause != "" {
+			query += " WHERE " + whereClause
+			args = whereArgs
+		}
+	}
+
+	// Add GROUP BY
+	if len(qb.groupBy) > 0 {
+		query += " GROUP BY " + strings.Join(qb.groupBy, ", ")
+	}
+
+	// Add HAVING
+	if len(qb.having) > 0 {
+		query += " HAVING " + strings.Join(qb.having, " AND ")
+	}
+
+	// Add ORDER BY
+	if len(qb.orderBy) > 0 {
+		query += " ORDER BY " + strings.Join(qb.orderBy, ", ")
+	}
+
+	// Add LIMIT
+	if qb.limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", qb.limit)
+	}
+
+	// Add OFFSET
+	if qb.offset > 0 {
+		query += fmt.Sprintf(" OFFSET %d", qb.offset)
+	}
+
+	return query, args, nil
+}
+
+func (qb *QueryBuilder) buildInsert() (string, []interface{}, error) {
+	if qb.table == "" {
+		return "", nil, fmt.Errorf("table name is required for INSERT")
+	}
+
+	if qb.insertModel != nil {
+		// Use existing buildInsertStmt function
+		insertParams := &DatabaseInsert{Table: qb.table}
+		parseTags(qb.insertModel, &insertParams.Fields)
+		return buildInsertStmt(insertParams, qb.insertModel)
+	}
+
+	if len(qb.values) == 0 {
+		return "", nil, fmt.Errorf("values are required for INSERT")
+	}
+
+	var fields []string
+	var placeholders []string
+	var args []interface{}
+
+	for field, value := range qb.values {
+		fields = append(fields, field)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)+1))
+		args = append(args, value)
+	}
+
+	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+		qb.table,
+		strings.Join(fields, ", "),
+		strings.Join(placeholders, ", "))
+
+	return query, args, nil
+}
+
+func (qb *QueryBuilder) buildUpdate() (string, []interface{}, error) {
+	if qb.table == "" {
+		return "", nil, fmt.Errorf("table name is required for UPDATE")
+	}
+
+	if qb.updateModel != nil {
+		// Use existing buildUpdateStmt function
+		updateParams := &DatabaseUpdate{
+			Table:      qb.table,
+			Conditions: qb.conditions,
+		}
+		return buildUpdateStmt(updateParams, qb.updateModel)
+	}
+
+	if len(qb.values) == 0 {
+		return "", nil, fmt.Errorf("values are required for UPDATE")
+	}
+
+	query := fmt.Sprintf("UPDATE %s SET ", qb.table)
+	var args []interface{}
+
+	var setParts []string
+	for field, value := range qb.values {
+		setParts = append(setParts, fmt.Sprintf("%s = $%d", field, len(args)+1))
+		args = append(args, value)
+	}
+
+	query += strings.Join(setParts, ", ")
+
+	// Add WHERE conditions using centralized function
+	if len(qb.conditions) > 0 {
+		whereClause, whereArgs := buildConditions(qb.conditions, args)
+		if whereClause != "" {
+			query += " WHERE " + whereClause
+			args = whereArgs
+		}
+	}
+
+	return query, args, nil
+}
+
+func (qb *QueryBuilder) buildDelete() (string, []interface{}, error) {
+	if qb.table == "" {
+		return "", nil, fmt.Errorf("table name is required for DELETE")
+	}
+
+	query := fmt.Sprintf("DELETE FROM %s", qb.table)
+
+	// Add WHERE conditions using centralized function
+	var args []interface{}
+	if len(qb.conditions) > 0 {
+		whereClause, whereArgs := buildConditions(qb.conditions, args)
+		if whereClause != "" {
+			query += " WHERE " + whereClause
+			args = whereArgs
+		}
+	}
+
+	return query, args, nil
 }
 
 // getPrimaryKeyField returns the database column name of the primary key field from a struct

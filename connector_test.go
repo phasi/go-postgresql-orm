@@ -787,6 +787,27 @@ func TestSelectUsersWithCondition(t *testing.T) {
 	}
 }
 
+func TestSelectUsersWithINCondition(t *testing.T) {
+	r := fakeHttpRequest()
+	models := []TestUser{}
+	err := connector.FindAll(&models, &DatabaseQuery{
+		Conditions: []Condition{
+			{
+				Field:    "name",
+				Operator: "IN",
+				Value:    []string{"Test User 1"},
+			},
+		},
+	}, WithContext(r.Context()))
+	if err != nil {
+		t.Errorf("error should be nil, but was: %s", err)
+	}
+	// print models
+	for _, model := range models {
+		t.Logf("Model: %v", model)
+	}
+}
+
 func TestSelectLimitedUsers(t *testing.T) {
 	r := fakeHttpRequest()
 	models := []TestUser{}

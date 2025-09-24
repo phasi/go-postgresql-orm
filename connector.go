@@ -364,42 +364,18 @@ func (s PostgreSQLConnector) deleteWithTx(ctx context.Context, tx *sql.Tx, model
 		Conditions: condition,
 	}
 
-	// Start the delete statement
-	query := fmt.Sprintf("DELETE FROM %s", deleteStmt.Table)
+	// Use QueryBuilder for consistent DELETE query building
+	qb := NewQueryBuilder()
+	qb.DeleteFrom(deleteStmt.Table)
 
-	// Add the conditions
-	var args []interface{}
-	if len(deleteStmt.Conditions) > 0 {
-		query += " WHERE "
-		for i, condition := range deleteStmt.Conditions {
-			if i > 0 {
-				query += " AND "
-			}
-			if condition.Operator == "LIKE" || condition.Operator == "NOT LIKE" {
-				query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, i+1)
-			} else if condition.Operator == "IN" || condition.Operator == "NOT IN" {
-				// Expecting condition.Value to be a slice
-				slice, ok := condition.Value.([]interface{})
-				if !ok || len(slice) == 0 {
-					return 0, fmt.Errorf("value for IN/NOT IN must be a non-empty slice")
-				}
-				placeholders := make([]string, len(slice))
-				for j := range slice {
-					placeholders[j] = fmt.Sprintf("$%d", i+1+j)
-				}
-				query += fmt.Sprintf("%s %s (%s)", condition.Field, condition.Operator, strings.Join(placeholders, ", "))
-				args = append(args, slice...)
+	// Add conditions using centralized logic
+	for _, cond := range deleteStmt.Conditions {
+		qb.Where(cond.Field, cond.Operator, cond.Value)
+	}
 
-			} else {
-				switch condition.Value.(type) {
-				case int, int32, int64, float32, float64:
-					query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, i+1)
-				default:
-					query += fmt.Sprintf("%s %s $%d", condition.Field, condition.Operator, i+1)
-				}
-			}
-			args = append(args, condition.Value)
-		}
+	query, args, err := qb.Build()
+	if err != nil {
+		return 0, fmt.Errorf("error building DELETE query: %v", err)
 	}
 
 	// Prepare the statement
