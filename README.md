@@ -244,18 +244,6 @@ query = &DatabaseQuery{
 }
 err := connector.FindAll(&users, query)
 
-// With joins
-query = &DatabaseQuery{
-    Joins: []DatabaseJoin{
-        {
-            Table:         "orm_testrelatedmodel",
-            LocalColumn:   "id",
-            ForeignColumn: "test_model_id",
-            JoinType:      "LEFT",
-        },
-    },
-}
-err := connector.FindAll(&models, query)
 ```
 
 ### Update Records
