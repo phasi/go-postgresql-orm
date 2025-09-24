@@ -463,23 +463,207 @@ return tx.Commit()
 
 ### QueryBuilder Utility
 
-Build WHERE clauses and query conditions programmatically:
+The QueryBuilder provides a fluent interface for constructing complex SQL queries programmatically, supporting SELECT, INSERT, UPDATE, and DELETE operations with advanced filtering, joins, and search capabilities.
+
+#### Basic SELECT Queries
 
 ```go
-builder := NewQueryBuilder().
+// Simple SELECT with conditions
+query, args, err := NewQueryBuilder().
+    Select("id", "name", "email").
+    From("users").
     Where("age", ">", 18).
     Where("status", "=", "active").
-    OrderBy("name", true). // true for DESC
-    Limit(10)
+    OrderByDesc("created_at").
+    Limit(10).
+    Build()
 
-whereClause, args := builder.Build()
-// Produces: " WHERE age > $1 AND status = $2 ORDER BY name DESC LIMIT 10"
-// args: [18, "active"]
+// Query: "SELECT id, name, email FROM users WHERE age > $1 AND status = $2 ORDER BY created_at DESC LIMIT 10"
+// Args: [18, "active"]
 
-// Use with custom queries
-fullQuery := "SELECT * FROM users" + whereClause
-rows, err := connector.CustomQuery(ctx, nil, fullQuery, args...)
+rows, err := connector.CustomQuery(ctx, nil, query, args...)
 ```
+
+#### Advanced WHERE Conditions
+
+```go
+// Using IN and NOT IN operators
+query, args, err := NewQueryBuilder().
+    Select("*").
+    From("products").
+    Where("category_id", "IN", []int{1, 2, 3}).
+    Where("status", "NOT IN", []string{"deleted", "archived"}).
+    WhereLike("name", "%premium%").
+    Build()
+
+// Convenience methods for common operations
+builder := NewQueryBuilder().
+    Select("*").
+    From("users").
+    WhereIn("role", []string{"admin", "moderator"}).
+    WhereNotIn("status", []string{"banned", "suspended"}).
+    WhereLike("email", "%@company.com")
+```
+
+#### JOIN Operations
+
+```go
+// Complex query with multiple JOINs
+query, args, err := NewQueryBuilder().
+    Select("u.name", "u.email", "p.title", "c.name as category").
+    From("users u").
+    LeftJoin("posts p", "p.author_id = u.id").
+    Join("categories c", "c.id = p.category_id").
+    Where("u.active", "=", true).
+    Where("p.published_at", "IS NOT", nil).
+    OrderBy("p.created_at", "DESC").
+    Build()
+
+rows, err := connector.CustomQuery(ctx, nil, query, args...)
+```
+
+#### Search Functionality
+
+```go
+// Full-text search across multiple fields
+query, args, err := NewQueryBuilder().
+    Select("*").
+    From("articles").
+    Search([]string{"title", "content", "tags"}, "golang database").
+    Where("status", "=", "published").
+    OrderByDesc("relevance_score").
+    Limit(20).
+    Build()
+
+rows, err := connector.CustomQuery(ctx, nil, query, args...)
+```
+
+#### INSERT Operations
+
+```go
+// Insert with explicit values
+query, args, err := NewQueryBuilder().
+    Insert(nil).
+    Into("users").
+    Values(map[string]interface{}{
+        "name":  "John Doe",
+        "email": "john@example.com",
+        "age":   30,
+    }).
+    Build()
+
+result, err := connector.CustomMutate(ctx, tx, query, args...)
+
+// Insert using a model (recommended)
+user := &User{Name: "Jane Doe", Email: "jane@example.com", Age: 25}
+query, args, err := NewQueryBuilder().
+    Insert(user).
+    Into("users").
+    Build()
+```
+
+#### UPDATE Operations
+
+```go
+// Update with individual field values
+query, args, err := NewQueryBuilder().
+    Update("users").
+    Set("name", "Updated Name").
+    Set("last_login", time.Now()).
+    Where("id", "=", userID).
+    Build()
+
+result, err := connector.CustomMutate(ctx, tx, query, args...)
+
+// Update using a model
+user := &User{ID: userID, Name: "New Name", Email: "new@example.com"}
+query, args, err := NewQueryBuilder().
+    Update("users").
+    SetModel(user).
+    Where("id", "=", userID).
+    Build()
+```
+
+#### DELETE Operations
+
+```go
+// Delete with conditions
+query, args, err := NewQueryBuilder().
+    DeleteFrom("posts").
+    Where("author_id", "=", userID).
+    Where("created_at", "<", time.Now().AddDate(0, 0, -365)).
+    Build()
+
+result, err := connector.CustomMutate(ctx, tx, query, args...)
+```
+
+#### Complex Analytical Queries
+
+```go
+// GROUP BY with HAVING clauses for analytics
+query, args, err := NewQueryBuilder().
+    Select("category", "COUNT(*) as post_count", "AVG(view_count) as avg_views").
+    From("posts").
+    Where("status", "=", "published").
+    Where("created_at", ">=", time.Now().AddDate(0, -1, 0)). // Last month
+    GroupBy("category").
+    Having("COUNT(*) > 5").
+    OrderBy("post_count", "DESC").
+    Build()
+
+rows, err := connector.CustomQuery(ctx, nil, query, args...)
+```
+
+#### Pagination and Offset
+
+```go
+// Paginated results
+pageSize := 20
+pageNumber := 3
+
+query, args, err := NewQueryBuilder().
+    Select("*").
+    From("products").
+    Where("active", "=", true).
+    OrderBy("name", "ASC").
+    Limit(pageSize).
+    Offset((pageNumber - 1) * pageSize).
+    Build()
+
+rows, err := connector.CustomQuery(ctx, nil, query, args...)
+```
+
+#### Combining Multiple Features
+
+```go
+// Real-world example: E-commerce product search
+query, args, err := NewQueryBuilder().
+    Select("p.*", "c.name as category_name", "AVG(r.rating) as avg_rating").
+    From("products p").
+    LeftJoin("categories c", "c.id = p.category_id").
+    LeftJoin("reviews r", "r.product_id = p.id").
+    Where("p.active", "=", true).
+    Where("p.price", "BETWEEN", []float64{10.0, 100.0}).
+    WhereIn("p.category_id", []int{1, 2, 3}).
+    Search([]string{"p.name", "p.description"}, searchTerm).
+    GroupBy("p.id", "c.name").
+    Having("AVG(r.rating) >= 4.0 OR AVG(r.rating) IS NULL").
+    OrderByDesc("avg_rating").
+    Limit(20).
+    Offset(offset).
+    Build()
+
+rows, err := connector.CustomQuery(ctx, nil, query, args...)
+```
+
+**Key Benefits:**
+
+- ✅ **Type-safe query building** - No string concatenation vulnerabilities
+- ✅ **SQL injection protection** - All values properly parameterized
+- ✅ **Flexible and composable** - Chain methods in any order
+- ✅ **Supports all SQL operations** - SELECT, INSERT, UPDATE, DELETE
+- ✅ **Advanced features** - JOINs, search, GROUP BY, HAVING
+- ✅ **Consistent with ORM** - Uses same condition handling as other methods
 
 ## Constants
 
