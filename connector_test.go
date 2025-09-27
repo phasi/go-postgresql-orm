@@ -932,3 +932,66 @@ func TestDropTables(t *testing.T) {
 		t.Errorf("error should be nil but was: %s", err)
 	}
 }
+
+// Test migrate tables
+func TestAppendingMigrationToTable(t *testing.T) {
+
+	func() {
+		type TestTable struct {
+			ID   uuid.UUID `gpo:"id,pk"`
+			Name string    `gpo:"name"`
+			Age  int       `gpo:"age"`
+		}
+
+		err := connector.CreateTables(&TestTable{})
+		if err != nil {
+			t.Errorf("error should be nil but was: %s", err)
+		}
+		// list cols
+		cols, err := connector.ListColumns(&TestTable{})
+		if err != nil {
+			t.Errorf("error should be nil but was: %s", err)
+		}
+
+		t.Logf("Columns before migration: %v", cols.String())
+	}()
+
+	defer func() {
+		type TestTable struct {
+			ID   uuid.UUID `gpo:"id,pk"`
+			Name string    `gpo:"name"`
+			Age  int       `gpo:"age"`
+			City string    `gpo:"city"`
+		}
+		err := connector.DropTables(&TestTable{})
+		if err != nil {
+			t.Errorf("error should be nil but was: %s", err)
+		}
+	}()
+
+	func() error {
+		type TestTable struct {
+			ID   uuid.UUID `gpo:"id,pk"`
+			Name string    `gpo:"name"`
+			Age  int       `gpo:"age"`
+			City string    `gpo:"city"`
+		}
+		err := connector.MigrateTables(&TestTable{})
+		if err != nil {
+			t.Errorf("error should be nil but was: %s", err)
+		}
+		cols, err := connector.ListColumns(&TestTable{})
+		if err != nil {
+			t.Errorf("error should be nil but was: %s", err)
+		}
+		t.Logf("Columns after migration: %v", cols.String())
+		return nil
+	}()
+}
+
+func TestCloseDatabase(t *testing.T) {
+	err := connector.Close()
+	if err != nil {
+		t.Errorf("error should be nil, but was: %s", err)
+	}
+}

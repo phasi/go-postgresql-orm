@@ -201,6 +201,137 @@ func validateOnDeleteText(text string) bool {
 	return false
 }
 
+func tableExists(db *sql.DB, tableName string) (bool, error) {
+	var exists bool
+	query := "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1)"
+	err := db.QueryRow(query, tableName).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+func _alterTable(db *sql.DB, table Table) error {
+	// Get existing columns from the database
+	existingColumns := make(map[string]Column)
+	rows, err := db.Query(fmt.Sprintf("SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = '%s'", table.Name))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var colName, dataType, isNullable string
+		if err := rows.Scan(&colName, &dataType, &isNullable); err != nil {
+			return err
+		}
+		existingColumns[colName] = Column{
+			Name: colName,
+			Type: dataType,
+			Null: isNullable == "YES",
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	// Compare and alter table as needed
+	for _, column := range table.Columns {
+		if existingCol, exists := existingColumns[column.Name]; !exists {
+			// Column does not exist, add it
+			nullText := "NOT NULL"
+			if column.Null {
+				nullText = "NULL"
+			}
+			uniqueText := ""
+			if column.Unique {
+				uniqueText = "UNIQUE"
+			}
+			sql := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s %s %s", table.Name, column.Name, column.Type, nullText, uniqueText)
+			if _, err := db.Exec(sql); err != nil {
+				return err
+			}
+		} else {
+			// Column exists, check for type or nullability changes
+			if existingCol.Type != column.Type {
+				sql := fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s TYPE %s", table.Name, column.Name, column.Type)
+				if _, err := db.Exec(sql); err != nil {
+					return err
+				}
+			}
+			if existingCol.Null != column.Null {
+				nullConstraint := "NOT NULL"
+				if column.Null {
+					nullConstraint = "NULL"
+				}
+				sql := fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET %s", table.Name, column.Name, nullConstraint)
+				if _, err := db.Exec(sql); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func _migrateTable(db *sql.DB, table Table) error {
+	// Check if the table exists
+	exists, err := tableExists(db, table.Name)
+	if err != nil {
+		return err
+	}
+
+	if !exists {
+		return _createTable(db, table)
+	}
+	return _alterTable(db, table)
+}
+
+func listColumns(db *sql.DB, tableName string) (Columns, error) {
+	rows, err := db.Query(fmt.Sprintf("SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = '%s'", tableName))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var columns Columns
+	for rows.Next() {
+		var col Column
+		var isNullable string
+		if err := rows.Scan(&col.Name, &col.Type, &isNullable); err != nil {
+			return nil, err
+		}
+		col.Null = isNullable == "YES"
+		columns = append(columns, col)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return columns, nil
+}
+
+func listTables(db *sql.DB) ([]string, error) {
+	rows, err := db.Query("SELECT table_name FROM information_schema.tables WHERE table_schema='public'")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			return nil, err
+		}
+		tables = append(tables, table)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return tables, nil
+}
+
 func _createTable(db *sql.DB, table Table) error {
 	if table.Name == "" {
 		return fmt.Errorf("table name cannot be empty")

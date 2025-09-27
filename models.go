@@ -98,6 +98,20 @@ type Column struct {
 	Length int
 }
 
+func (c *Column) String() string {
+	return c.Name
+}
+
+type Columns []Column
+
+func (c *Columns) String() []string {
+	var cols []string
+	for _, col := range *c {
+		cols = append(cols, col.Name)
+	}
+	return cols
+}
+
 type ForeignKey struct {
 	ColumnName string
 	References string // format: "table(column)"

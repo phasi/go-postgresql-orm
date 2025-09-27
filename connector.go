@@ -81,6 +81,14 @@ func (s *PostgreSQLConnector) CreateDatabase(dbName string) error {
 	return err
 }
 
+func (s *PostgreSQLConnector) MigrateTable(model interface{}) error {
+	tableName := getTableNameFromModel(s.TablePrefix, model)
+	columns, foreignKeys := getColumnsAndForeignKeysFromStructWithPrefix(model, s.TablePrefix)
+	table := Table{Name: tableName, Columns: columns, ForeignKeys: foreignKeys}
+	db := s.GetConnection()
+	return _migrateTable(db, table)
+}
+
 // CreateTable creates a single table in the database for the given model
 func (s *PostgreSQLConnector) CreateTable(model interface{}) error {
 	tableName := getTableNameFromModel(s.TablePrefix, model)
@@ -110,6 +118,16 @@ func (s *PostgreSQLConnector) DropTable(modelOrTableName interface{}, cascade bo
 	return err
 }
 
+func (s *PostgreSQLConnector) MigrateTables(models ...interface{}) error {
+	for _, model := range models {
+		err := s.MigrateTable(model)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // CreateTables creates tables in the database for the given models (table names are populated from the struct names)
 func (s *PostgreSQLConnector) CreateTables(models ...interface{}) error {
 	for _, model := range models {
@@ -129,6 +147,25 @@ func (s *PostgreSQLConnector) DropTables(modelsOrTableNames ...interface{}) erro
 		}
 	}
 	return nil
+}
+
+func (s *PostgreSQLConnector) ListTables() ([]string, error) {
+	db := s.GetConnection()
+	return listTables(db)
+}
+
+// ListColumns lists the columns of a table given a model or table name (string)
+func (s *PostgreSQLConnector) ListColumns(table interface{}) (Columns, error) {
+	tableName := ""
+	var ok bool
+	tableName, ok = table.(string)
+	if !ok {
+		if tableName == "" {
+			tableName = getTableNameFromModel(s.TablePrefix, table)
+		}
+	}
+	db := s.GetConnection()
+	return listColumns(db, tableName)
 }
 
 func (s PostgreSQLConnector) insertWithTx(ctx context.Context, tx *sql.Tx, model interface{}) (err error) {
